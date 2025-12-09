@@ -33,45 +33,7 @@
     {
       "type": "Device",
       "id": 1,
-      "conn_type": "wired",
-      "resource": {
-        "cpu": 40000000000.0,
-        "num": 8,
-        "gpu": 2000000000000.0,
-        "gpu_mem": 8,
-        "ram": 8,
-        "disk": 100,
-        "cpu_power": 1,
-        "gpu_power": 10.0
-      },
-      "act_cap": [
-        2,
-        1
-      ],
-      "sense_cap": [
-        3,
-        1,
-        2
-      ],
-      "soft_cap": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10
-      ],
-      "bandwidth": 87.58290442186599,
-      "delay": 1.9456933557163705
-    },
-    {
-      "type": "Device",
-      "id": 2,
-      "conn_type": "wired",
+      "conn_type": "wireless",
       "resource": {
         "cpu": 15000000000.0,
         "num": 2,
@@ -83,57 +45,26 @@
         "gpu_power": 0
       },
       "act_cap": [
-        1,
         3,
+        1,
         2
       ],
       "sense_cap": [
-        2,
-        3
-      ],
-      "soft_cap": [
-        8,
-        9,
-        10
-      ],
-      "bandwidth": 82.33413540521889,
-      "delay": 1.5371771576800017
-    },
-    {
-      "type": "Device",
-      "id": 3,
-      "conn_type": "wired",
-      "resource": {
-        "cpu": 10000000000.0,
-        "num": 1,
-        "gpu": 0,
-        "gpu_mem": 0,
-        "ram": 2,
-        "disk": 20,
-        "cpu_power": 1,
-        "gpu_power": 0
-      },
-      "act_cap": [
         3,
         2,
         1
       ],
-      "sense_cap": [
-        1,
-        2,
-        3
-      ],
       "soft_cap": [
         8,
         9,
         10
       ],
-      "bandwidth": 91.52281593209608,
-      "delay": 1.9597349360086875
+      "bandwidth": 23.30869402283362,
+      "delay": 2.5019059592066695
     },
     {
       "type": "Device",
-      "id": 4,
+      "id": 2,
       "conn_type": "wireless",
       "resource": {
         "cpu": 40000000000.0,
@@ -147,11 +78,13 @@
       },
       "act_cap": [
         3,
-        1
+        1,
+        2
       ],
       "sense_cap": [
+        1,
         2,
-        1
+        3
       ],
       "soft_cap": [
         1,
@@ -165,39 +98,123 @@
         9,
         10
       ],
-      "bandwidth": 15.179775145127277,
-      "delay": 8.322298518894296
+      "bandwidth": 22.6913583855282,
+      "delay": 3.1874168113646153
     },
     {
       "type": "Device",
-      "id": 5,
-      "conn_type": "wired",
+      "id": 3,
+      "conn_type": "wireless",
       "resource": {
-        "cpu": 10000000000.0,
-        "num": 1,
-        "gpu": 0,
-        "gpu_mem": 0,
-        "ram": 2,
-        "disk": 20,
+        "cpu": 40000000000.0,
+        "num": 8,
+        "gpu": 2000000000000.0,
+        "gpu_mem": 8,
+        "ram": 8,
+        "disk": 100,
         "cpu_power": 1,
-        "gpu_power": 0
+        "gpu_power": 10.0
       },
       "act_cap": [
         2,
-        1
+        1,
+        3
       ],
       "sense_cap": [
         3,
-        2,
-        1
+        2
       ],
       "soft_cap": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
         8,
         9,
         10
       ],
-      "bandwidth": 81.27674447362729,
-      "delay": 1.9991718833803014
+      "bandwidth": 26.326908479038998,
+      "delay": 4.116512449450294
+    },
+    {
+      "type": "Device",
+      "id": 4,
+      "conn_type": "wired",
+      "resource": {
+        "cpu": 40000000000.0,
+        "num": 8,
+        "gpu": 2000000000000.0,
+        "gpu_mem": 8,
+        "ram": 8,
+        "disk": 100,
+        "cpu_power": 1,
+        "gpu_power": 10.0
+      },
+      "act_cap": [
+        3,
+        2
+      ],
+      "sense_cap": [
+        3,
+        1,
+        2
+      ],
+      "soft_cap": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "bandwidth": 82.64806903035125,
+      "delay": 1.9559117746819092
+    },
+    {
+      "type": "Device",
+      "id": 5,
+      "conn_type": "wireless",
+      "resource": {
+        "cpu": 40000000000.0,
+        "num": 8,
+        "gpu": 2000000000000.0,
+        "gpu_mem": 8,
+        "ram": 8,
+        "disk": 100,
+        "cpu_power": 1,
+        "gpu_power": 10.0
+      },
+      "act_cap": [
+        1,
+        3,
+        2
+      ],
+      "sense_cap": [
+        1,
+        3,
+        2
+      ],
+      "soft_cap": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "bandwidth": 20.569630477529444,
+      "delay": 4.433383275971785
     },
     {
       "type": "Device",
@@ -215,19 +232,20 @@
       },
       "act_cap": [
         1,
-        2
+        3
       ],
       "sense_cap": [
+        1,
         3,
-        1
+        2
       ],
       "soft_cap": [
         8,
         9,
         10
       ],
-      "bandwidth": 85.36819104314179,
-      "delay": 1.9189800292638979
+      "bandwidth": 91.80697882535021,
+      "delay": 1.5441028552778215
     },
     {
       "type": "Device",
@@ -244,146 +262,40 @@
         "gpu_power": 0
       },
       "act_cap": [
-        2,
         3,
-        1
+        1,
+        2
       ],
       "sense_cap": [
-        2,
+        1,
         3,
-        1
+        2
       ],
       "soft_cap": [
         8,
         9,
         10
       ],
-      "bandwidth": 97.82441834934835,
-      "delay": 1.5907378630377618
+      "bandwidth": 95.95443983076689,
+      "delay": 1.0879265307193682
     },
     {
       "type": "Device",
       "id": 8,
       "conn_type": "wired",
       "resource": {
-        "cpu": 40000000000.0,
-        "num": 8,
-        "gpu": 2000000000000.0,
-        "gpu_mem": 8,
-        "ram": 8,
-        "disk": 100,
-        "cpu_power": 1,
-        "gpu_power": 10.0
-      },
-      "act_cap": [
-        1,
-        2
-      ],
-      "sense_cap": [
-        1,
-        2
-      ],
-      "soft_cap": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10
-      ],
-      "bandwidth": 94.08717147866041,
-      "delay": 1.1829918570558082
-    },
-    {
-      "type": "Device",
-      "id": 9,
-      "conn_type": "wired",
-      "resource": {
-        "cpu": 40000000000.0,
-        "num": 8,
-        "gpu": 2000000000000.0,
-        "gpu_mem": 8,
-        "ram": 8,
-        "disk": 100,
-        "cpu_power": 1,
-        "gpu_power": 10.0
-      },
-      "act_cap": [
-        1,
-        3,
-        2
-      ],
-      "sense_cap": [
-        3,
-        2
-      ],
-      "soft_cap": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10
-      ],
-      "bandwidth": 83.71605998498025,
-      "delay": 1.6451158257089857
-    },
-    {
-      "type": "Device",
-      "id": 10,
-      "conn_type": "wired",
-      "resource": {
-        "cpu": 15000000000.0,
-        "num": 2,
+        "cpu": 10000000000.0,
+        "num": 1,
         "gpu": 0,
         "gpu_mem": 0,
-        "ram": 4,
-        "disk": 40,
-        "cpu_power": 1,
-        "gpu_power": 0
-      },
-      "act_cap": [
-        2,
-        3
-      ],
-      "sense_cap": [
-        3,
-        2
-      ],
-      "soft_cap": [
-        8,
-        9,
-        10
-      ],
-      "bandwidth": 83.23665201279039,
-      "delay": 1.7550537908698391
-    },
-    {
-      "type": "Device",
-      "id": 11,
-      "conn_type": "wired",
-      "resource": {
-        "cpu": 15000000000.0,
-        "num": 2,
-        "gpu": 0,
-        "gpu_mem": 0,
-        "ram": 4,
-        "disk": 40,
+        "ram": 2,
+        "disk": 20,
         "cpu_power": 1,
         "gpu_power": 0
       },
       "act_cap": [
         1,
-        2,
-        3
+        2
       ],
       "sense_cap": [
         2,
@@ -395,8 +307,108 @@
         9,
         10
       ],
-      "bandwidth": 99.90045822119833,
-      "delay": 1.4886785275035765
+      "bandwidth": 99.6396588949623,
+      "delay": 1.0863993602878605
+    },
+    {
+      "type": "Device",
+      "id": 9,
+      "conn_type": "wired",
+      "resource": {
+        "cpu": 10000000000.0,
+        "num": 1,
+        "gpu": 0,
+        "gpu_mem": 0,
+        "ram": 2,
+        "disk": 20,
+        "cpu_power": 1,
+        "gpu_power": 0
+      },
+      "act_cap": [
+        2,
+        1,
+        3
+      ],
+      "sense_cap": [
+        1,
+        2,
+        3
+      ],
+      "soft_cap": [
+        8,
+        9,
+        10
+      ],
+      "bandwidth": 90.42696219668488,
+      "delay": 1.88839929854208
+    },
+    {
+      "type": "Device",
+      "id": 10,
+      "conn_type": "wired",
+      "resource": {
+        "cpu": 40000000000.0,
+        "num": 8,
+        "gpu": 2000000000000.0,
+        "gpu_mem": 8,
+        "ram": 8,
+        "disk": 100,
+        "cpu_power": 1,
+        "gpu_power": 10.0
+      },
+      "act_cap": [
+        2,
+        1
+      ],
+      "sense_cap": [
+        3,
+        2
+      ],
+      "soft_cap": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "bandwidth": 88.44087091643956,
+      "delay": 1.016099154001966
+    },
+    {
+      "type": "Device",
+      "id": 11,
+      "conn_type": "wired",
+      "resource": {
+        "cpu": 10000000000.0,
+        "num": 1,
+        "gpu": 0,
+        "gpu_mem": 0,
+        "ram": 2,
+        "disk": 20,
+        "cpu_power": 1,
+        "gpu_power": 0
+      },
+      "act_cap": [
+        2,
+        3,
+        1
+      ],
+      "sense_cap": [
+        3,
+        1
+      ],
+      "soft_cap": [
+        8,
+        9,
+        10
+      ],
+      "bandwidth": 90.11832194251684,
+      "delay": 1.5202392042743105
     },
     {
       "type": "Device",
@@ -413,101 +425,119 @@
         "gpu_power": 0
       },
       "act_cap": [
-        1,
+        3,
         2,
-        3
+        1
       ],
       "sense_cap": [
         1,
-        2
+        3
       ],
       "soft_cap": [
         8,
         9,
         10
       ],
-      "bandwidth": 82.85389287549083,
-      "delay": 1.1994095603773962
+      "bandwidth": 95.31445415546466,
+      "delay": 1.7869518292018458
     },
     {
       "type": "Device",
       "id": 13,
       "conn_type": "wired",
       "resource": {
-        "cpu": 40000000000.0,
-        "num": 8,
-        "gpu": 2000000000000.0,
-        "gpu_mem": 8,
-        "ram": 8,
-        "disk": 100,
+        "cpu": 10000000000.0,
+        "num": 1,
+        "gpu": 0,
+        "gpu_mem": 0,
+        "ram": 2,
+        "disk": 20,
         "cpu_power": 1,
-        "gpu_power": 10.0
+        "gpu_power": 0
       },
       "act_cap": [
+        1,
+        3,
+        2
+      ],
+      "sense_cap": [
         3,
         2,
         1
       ],
-      "sense_cap": [
-        3,
-        2
-      ],
       "soft_cap": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
         8,
         9,
         10
       ],
-      "bandwidth": 97.94201435597694,
-      "delay": 1.4215744412976332
+      "bandwidth": 88.03026727118846,
+      "delay": 1.3762848121894118
     },
     {
       "type": "Device",
       "id": 14,
-      "conn_type": "wireless",
+      "conn_type": "wired",
       "resource": {
-        "cpu": 40000000000.0,
-        "num": 8,
-        "gpu": 2000000000000.0,
-        "gpu_mem": 8,
-        "ram": 8,
-        "disk": 100,
+        "cpu": 15000000000.0,
+        "num": 2,
+        "gpu": 0,
+        "gpu_mem": 0,
+        "ram": 4,
+        "disk": 40,
         "cpu_power": 1,
-        "gpu_power": 10.0
+        "gpu_power": 0
       },
       "act_cap": [
-        1,
+        3,
         2
       ],
       "sense_cap": [
-        1,
-        2,
-        3
+        3,
+        1
       ],
       "soft_cap": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
         8,
         9,
         10
       ],
-      "bandwidth": 21.307964986772035,
-      "delay": 2.7912832074279743
+      "bandwidth": 80.52247101274816,
+      "delay": 1.1426333414186831
     },
     {
       "type": "Device",
       "id": 15,
+      "conn_type": "wireless",
+      "resource": {
+        "cpu": 10000000000.0,
+        "num": 1,
+        "gpu": 0,
+        "gpu_mem": 0,
+        "ram": 2,
+        "disk": 20,
+        "cpu_power": 1,
+        "gpu_power": 0
+      },
+      "act_cap": [
+        1,
+        2,
+        3
+      ],
+      "sense_cap": [
+        1,
+        3,
+        2
+      ],
+      "soft_cap": [
+        8,
+        9,
+        10
+      ],
+      "bandwidth": 19.906327262388416,
+      "delay": 9.585173763618508
+    },
+    {
+      "type": "Device",
+      "id": 16,
       "conn_type": "wired",
       "resource": {
         "cpu": 40000000000.0,
@@ -521,12 +551,11 @@
       },
       "act_cap": [
         1,
-        3,
-        2
+        3
       ],
       "sense_cap": [
-        2,
         3,
+        2,
         1
       ],
       "soft_cap": [
@@ -541,46 +570,52 @@
         9,
         10
       ],
-      "bandwidth": 83.90340876513022,
-      "delay": 1.6622585009212807
-    },
-    {
-      "type": "Device",
-      "id": 16,
-      "conn_type": "wireless",
-      "resource": {
-        "cpu": 15000000000.0,
-        "num": 2,
-        "gpu": 0,
-        "gpu_mem": 0,
-        "ram": 4,
-        "disk": 40,
-        "cpu_power": 1,
-        "gpu_power": 0
-      },
-      "act_cap": [
-        1,
-        2,
-        3
-      ],
-      "sense_cap": [
-        1,
-        2,
-        3
-      ],
-      "soft_cap": [
-        8,
-        9,
-        10
-      ],
-      "bandwidth": 28.849237627515016,
-      "delay": 4.637830969208621
+      "bandwidth": 87.1869778856335,
+      "delay": 1.7072198312035225
     },
     {
       "type": "Device",
       "id": 17,
       "conn_type": "wireless",
       "resource": {
+        "cpu": 40000000000.0,
+        "num": 8,
+        "gpu": 2000000000000.0,
+        "gpu_mem": 8,
+        "ram": 8,
+        "disk": 100,
+        "cpu_power": 1,
+        "gpu_power": 10.0
+      },
+      "act_cap": [
+        1,
+        2,
+        3
+      ],
+      "sense_cap": [
+        1,
+        3
+      ],
+      "soft_cap": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "bandwidth": 19.393106967016678,
+      "delay": 2.727192718149763
+    },
+    {
+      "type": "Device",
+      "id": 18,
+      "conn_type": "wireless",
+      "resource": {
         "cpu": 15000000000.0,
         "num": 2,
         "gpu": 0,
@@ -591,44 +626,10 @@
         "gpu_power": 0
       },
       "act_cap": [
-        1,
-        2,
-        3
+        3,
+        2
       ],
       "sense_cap": [
-        2,
-        3,
-        1
-      ],
-      "soft_cap": [
-        8,
-        9,
-        10
-      ],
-      "bandwidth": 27.663823178512857,
-      "delay": 2.6903487490015294
-    },
-    {
-      "type": "Device",
-      "id": 18,
-      "conn_type": "wired",
-      "resource": {
-        "cpu": 10000000000.0,
-        "num": 1,
-        "gpu": 0,
-        "gpu_mem": 0,
-        "ram": 2,
-        "disk": 20,
-        "cpu_power": 1,
-        "gpu_power": 0
-      },
-      "act_cap": [
-        2,
-        3,
-        1
-      ],
-      "sense_cap": [
-        3,
         2,
         1
       ],
@@ -637,43 +638,12 @@
         9,
         10
       ],
-      "bandwidth": 88.98119327977253,
-      "delay": 1.5161323863968605
+      "bandwidth": 28.858032322119417,
+      "delay": 4.344450426142137
     },
     {
       "type": "Device",
       "id": 19,
-      "conn_type": "wired",
-      "resource": {
-        "cpu": 10000000000.0,
-        "num": 1,
-        "gpu": 0,
-        "gpu_mem": 0,
-        "ram": 2,
-        "disk": 20,
-        "cpu_power": 1,
-        "gpu_power": 0
-      },
-      "act_cap": [
-        3,
-        1,
-        2
-      ],
-      "sense_cap": [
-        3,
-        2
-      ],
-      "soft_cap": [
-        8,
-        9,
-        10
-      ],
-      "bandwidth": 98.18396202891076,
-      "delay": 1.6878932614653261
-    },
-    {
-      "type": "Device",
-      "id": 20,
       "conn_type": "wireless",
       "resource": {
         "cpu": 40000000000.0,
@@ -687,12 +657,12 @@
       },
       "act_cap": [
         1,
-        2
+        2,
+        3
       ],
       "sense_cap": [
-        3,
-        2,
-        1
+        1,
+        2
       ],
       "soft_cap": [
         1,
@@ -706,44 +676,89 @@
         9,
         10
       ],
-      "bandwidth": 27.515314776707516,
-      "delay": 4.3015500964824955
+      "bandwidth": 26.08533423652317,
+      "delay": 3.908044111233981
+    },
+    {
+      "type": "Device",
+      "id": 20,
+      "conn_type": "wired",
+      "resource": {
+        "cpu": 40000000000.0,
+        "num": 8,
+        "gpu": 2000000000000.0,
+        "gpu_mem": 8,
+        "ram": 8,
+        "disk": 100,
+        "cpu_power": 1,
+        "gpu_power": 10.0
+      },
+      "act_cap": [
+        3,
+        1,
+        2
+      ],
+      "sense_cap": [
+        1,
+        3
+      ],
+      "soft_cap": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "bandwidth": 92.59437359438675,
+      "delay": 1.6202209224274997
     },
     {
       "type": "Device",
       "id": 21,
       "conn_type": "wireless",
       "resource": {
-        "cpu": 10000000000.0,
-        "num": 1,
-        "gpu": 0,
-        "gpu_mem": 0,
-        "ram": 2,
-        "disk": 20,
+        "cpu": 40000000000.0,
+        "num": 8,
+        "gpu": 2000000000000.0,
+        "gpu_mem": 8,
+        "ram": 8,
+        "disk": 100,
         "cpu_power": 1,
-        "gpu_power": 0
+        "gpu_power": 10.0
       },
       "act_cap": [
         1,
-        2,
-        3
+        3,
+        2
       ],
       "sense_cap": [
-        1,
-        3
+        3,
+        2
       ],
       "soft_cap": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
         8,
         9,
         10
       ],
-      "bandwidth": 19.907238235403362,
-      "delay": 11.857144454204647
+      "bandwidth": 16.10156027395349,
+      "delay": 8.547460396309866
     },
     {
       "type": "Device",
       "id": 22,
-      "conn_type": "wireless",
+      "conn_type": "wired",
       "resource": {
         "cpu": 40000000000.0,
         "num": 8,
@@ -755,8 +770,8 @@
         "gpu_power": 10.0
       },
       "act_cap": [
-        3,
-        2
+        2,
+        1
       ],
       "sense_cap": [
         2,
@@ -774,8 +789,8 @@
         9,
         10
       ],
-      "bandwidth": 13.974481994337768,
-      "delay": 11.810329367234749
+      "bandwidth": 99.96346042946007,
+      "delay": 1.3140699105842562
     },
     {
       "type": "Device",
@@ -792,20 +807,20 @@
         "gpu_power": 0
       },
       "act_cap": [
-        2,
-        3
+        3,
+        2
       ],
       "sense_cap": [
-        2,
-        1
+        3,
+        2
       ],
       "soft_cap": [
         8,
         9,
         10
       ],
-      "bandwidth": 93.40307301953749,
-      "delay": 1.6025856615148917
+      "bandwidth": 98.97733576216885,
+      "delay": 1.7158357699658278
     },
     {
       "type": "Device",
@@ -822,8 +837,9 @@
         "gpu_power": 10.0
       },
       "act_cap": [
-        1,
-        3
+        2,
+        3,
+        1
       ],
       "sense_cap": [
         2,
@@ -841,44 +857,12 @@
         9,
         10
       ],
-      "bandwidth": 95.57509556414996,
-      "delay": 1.7630108869506698
+      "bandwidth": 97.89538820539528,
+      "delay": 1.033376580384937
     },
     {
       "type": "Device",
       "id": 25,
-      "conn_type": "wireless",
-      "resource": {
-        "cpu": 10000000000.0,
-        "num": 1,
-        "gpu": 0,
-        "gpu_mem": 0,
-        "ram": 2,
-        "disk": 20,
-        "cpu_power": 1,
-        "gpu_power": 0
-      },
-      "act_cap": [
-        3,
-        1,
-        2
-      ],
-      "sense_cap": [
-        3,
-        2,
-        1
-      ],
-      "soft_cap": [
-        8,
-        9,
-        10
-      ],
-      "bandwidth": 13.674012020918056,
-      "delay": 8.245334097243497
-    },
-    {
-      "type": "Device",
-      "id": 26,
       "conn_type": "wired",
       "resource": {
         "cpu": 10000000000.0,
@@ -891,11 +875,11 @@
         "gpu_power": 0
       },
       "act_cap": [
-        1,
-        2
+        3,
+        1
       ],
       "sense_cap": [
-        2,
+        3,
         1
       ],
       "soft_cap": [
@@ -903,86 +887,12 @@
         9,
         10
       ],
-      "bandwidth": 99.48742120638875,
-      "delay": 1.1159290049300528
+      "bandwidth": 89.83202915417526,
+      "delay": 1.485316112721334
     },
     {
       "type": "Device",
-      "id": 27,
-      "conn_type": "wireless",
-      "resource": {
-        "cpu": 40000000000.0,
-        "num": 8,
-        "gpu": 2000000000000.0,
-        "gpu_mem": 8,
-        "ram": 8,
-        "disk": 100,
-        "cpu_power": 1,
-        "gpu_power": 10.0
-      },
-      "act_cap": [
-        1,
-        3
-      ],
-      "sense_cap": [
-        1,
-        3
-      ],
-      "soft_cap": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10
-      ],
-      "bandwidth": 18.06574793627831,
-      "delay": 4.5248841712498615
-    },
-    {
-      "type": "Device",
-      "id": 28,
-      "conn_type": "wireless",
-      "resource": {
-        "cpu": 40000000000.0,
-        "num": 8,
-        "gpu": 2000000000000.0,
-        "gpu_mem": 8,
-        "ram": 8,
-        "disk": 100,
-        "cpu_power": 1,
-        "gpu_power": 10.0
-      },
-      "act_cap": [
-        3,
-        1
-      ],
-      "sense_cap": [
-        1,
-        3
-      ],
-      "soft_cap": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10
-      ],
-      "bandwidth": 22.62201344510631,
-      "delay": 2.175185473232333
-    },
-    {
-      "type": "Device",
-      "id": 29,
+      "id": 26,
       "conn_type": "wired",
       "resource": {
         "cpu": 15000000000.0,
@@ -995,12 +905,42 @@
         "gpu_power": 0
       },
       "act_cap": [
-        1,
+        3,
         2,
-        3
+        1
       ],
       "sense_cap": [
+        1,
+        2
+      ],
+      "soft_cap": [
+        8,
+        9,
+        10
+      ],
+      "bandwidth": 91.81173723638008,
+      "delay": 1.1710096583232772
+    },
+    {
+      "type": "Device",
+      "id": 27,
+      "conn_type": "wired",
+      "resource": {
+        "cpu": 15000000000.0,
+        "num": 2,
+        "gpu": 0,
+        "gpu_mem": 0,
+        "ram": 4,
+        "disk": 40,
+        "cpu_power": 1,
+        "gpu_power": 0
+      },
+      "act_cap": [
+        3,
         2,
+        1
+      ],
+      "sense_cap": [
         3,
         1
       ],
@@ -1009,8 +949,69 @@
         9,
         10
       ],
-      "bandwidth": 88.1919761680403,
-      "delay": 1.1906146784147937
+      "bandwidth": 83.97621344562889,
+      "delay": 1.3268538711871747
+    },
+    {
+      "type": "Device",
+      "id": 28,
+      "conn_type": "wired",
+      "resource": {
+        "cpu": 15000000000.0,
+        "num": 2,
+        "gpu": 0,
+        "gpu_mem": 0,
+        "ram": 4,
+        "disk": 40,
+        "cpu_power": 1,
+        "gpu_power": 0
+      },
+      "act_cap": [
+        3,
+        2
+      ],
+      "sense_cap": [
+        1,
+        2,
+        3
+      ],
+      "soft_cap": [
+        8,
+        9,
+        10
+      ],
+      "bandwidth": 89.4528243155095,
+      "delay": 1.49242638099659
+    },
+    {
+      "type": "Device",
+      "id": 29,
+      "conn_type": "wireless",
+      "resource": {
+        "cpu": 10000000000.0,
+        "num": 1,
+        "gpu": 0,
+        "gpu_mem": 0,
+        "ram": 2,
+        "disk": 20,
+        "cpu_power": 1,
+        "gpu_power": 0
+      },
+      "act_cap": [
+        3,
+        2
+      ],
+      "sense_cap": [
+        3,
+        2
+      ],
+      "soft_cap": [
+        8,
+        9,
+        10
+      ],
+      "bandwidth": 21.97945551234445,
+      "delay": 3.151328467347342
     },
     {
       "type": "Device",
@@ -1028,13 +1029,11 @@
       },
       "act_cap": [
         3,
-        2,
         1
       ],
       "sense_cap": [
-        3,
-        2,
-        1
+        1,
+        3
       ],
       "soft_cap": [
         1,
@@ -1048,8 +1047,8 @@
         9,
         10
       ],
-      "bandwidth": 80.93197823267822,
-      "delay": 1.6953846221911848
+      "bandwidth": 96.06261425334995,
+      "delay": 1.4267718890969783
     }
   ],
   "edge_server_list": [
