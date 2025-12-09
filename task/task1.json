@@ -1,0 +1,108 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "id": "proc5"
+    },
+    {
+      "id": "proc1"
+    },
+    {
+      "id": "proc10"
+    },
+    {
+      "id": "proc9"
+    },
+    {
+      "id": "proc6"
+    },
+    {
+      "id": "proc3"
+    },
+    {
+      "id": "proc4"
+    },
+    {
+      "id": "proc7"
+    },
+    {
+      "id": "proc2"
+    },
+    {
+      "id": "sense1"
+    },
+    {
+      "id": "sense2"
+    },
+    {
+      "id": "act3"
+    },
+    {
+      "id": "act2"
+    }
+  ],
+  "links": [
+    {
+      "source": "proc5",
+      "target": "proc1"
+    },
+    {
+      "source": "proc5",
+      "target": "proc10"
+    },
+    {
+      "source": "proc1",
+      "target": "proc9"
+    },
+    {
+      "source": "proc1",
+      "target": "proc6"
+    },
+    {
+      "source": "proc10",
+      "target": "act2"
+    },
+    {
+      "source": "proc9",
+      "target": "act3"
+    },
+    {
+      "source": "proc6",
+      "target": "act2"
+    },
+    {
+      "source": "proc3",
+      "target": "proc4"
+    },
+    {
+      "source": "proc4",
+      "target": "proc1"
+    },
+    {
+      "source": "proc7",
+      "target": "proc2"
+    },
+    {
+      "source": "proc2",
+      "target": "proc1"
+    },
+    {
+      "source": "sense1",
+      "target": "proc5"
+    },
+    {
+      "source": "sense1",
+      "target": "proc7"
+    },
+    {
+      "source": "sense2",
+      "target": "proc5"
+    },
+    {
+      "source": "sense2",
+      "target": "proc3"
+    }
+  ]
+}

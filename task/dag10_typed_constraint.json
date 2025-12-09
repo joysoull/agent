@@ -1,0 +1,194 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "id": "proc1",
+      "type": "proc",
+      "idx": 9
+    },
+    {
+      "id": "proc2",
+      "type": "proc",
+      "idx": 10
+    },
+    {
+      "id": "proc3",
+      "type": "proc",
+      "idx": 4
+    },
+    {
+      "id": "proc4",
+      "type": "proc",
+      "idx": 1
+    },
+    {
+      "id": "proc5",
+      "type": "proc",
+      "idx": 6
+    },
+    {
+      "id": "proc6",
+      "type": "proc",
+      "idx": 1
+    },
+    {
+      "id": "proc7",
+      "type": "proc",
+      "idx": 7
+    },
+    {
+      "id": "proc8",
+      "type": "proc",
+      "idx": 6
+    },
+    {
+      "id": "sense1",
+      "type": "sense",
+      "idx": 3
+    },
+    {
+      "id": "sense2",
+      "type": "sense",
+      "idx": 1
+    },
+    {
+      "id": "sense3",
+      "type": "sense",
+      "idx": 2
+    },
+    {
+      "id": "sense4",
+      "type": "sense",
+      "idx": 3
+    },
+    {
+      "id": "sense5",
+      "type": "sense",
+      "idx": 3
+    },
+    {
+      "id": "act1",
+      "type": "act",
+      "idx": 1
+    },
+    {
+      "id": "act2",
+      "type": "act",
+      "idx": 1
+    },
+    {
+      "id": "act3",
+      "type": "act",
+      "idx": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "proc1",
+      "target": "proc2",
+      "data_size": 1.1,
+      "bandwidth_req": 0.37,
+      "latency_req": 651
+    },
+    {
+      "source": "proc1",
+      "target": "proc3",
+      "data_size": 1.1,
+      "bandwidth_req": 0.95,
+      "latency_req": 871
+    },
+    {
+      "source": "proc2",
+      "target": "proc4",
+      "data_size": 1.9,
+      "bandwidth_req": 0.65,
+      "latency_req": 720
+    },
+    {
+      "source": "proc4",
+      "target": "act2",
+      "data_size": 1.3,
+      "bandwidth_req": 0.1,
+      "latency_req": 715
+    },
+    {
+      "source": "proc4",
+      "target": "act3",
+      "data_size": 1.1,
+      "bandwidth_req": 0.62,
+      "latency_req": 862
+    },
+    {
+      "source": "proc5",
+      "target": "proc2",
+      "data_size": 1.2,
+      "bandwidth_req": 0.5,
+      "latency_req": 685
+    },
+    {
+      "source": "proc6",
+      "target": "proc7",
+      "data_size": 1.2,
+      "bandwidth_req": 0.91,
+      "latency_req": 918
+    },
+    {
+      "source": "proc6",
+      "target": "proc8",
+      "data_size": 0.8,
+      "bandwidth_req": 0.18,
+      "latency_req": 806
+    },
+    {
+      "source": "proc7",
+      "target": "proc2",
+      "data_size": 1.4,
+      "bandwidth_req": 0.4,
+      "latency_req": 927
+    },
+    {
+      "source": "proc8",
+      "target": "act1",
+      "data_size": 1.6,
+      "bandwidth_req": 0.71,
+      "latency_req": 690
+    },
+    {
+      "source": "sense1",
+      "target": "proc5",
+      "data_size": 0.8,
+      "bandwidth_req": 0.12,
+      "latency_req": 698
+    },
+    {
+      "source": "sense2",
+      "target": "proc1",
+      "data_size": 1.2,
+      "bandwidth_req": 0.86,
+      "latency_req": 629
+    },
+    {
+      "source": "sense3",
+      "target": "proc5",
+      "data_size": 1.1,
+      "bandwidth_req": 0.67,
+      "latency_req": 678
+    },
+    {
+      "source": "sense4",
+      "target": "proc6",
+      "data_size": 1.5,
+      "bandwidth_req": 0.54,
+      "latency_req": 698
+    },
+    {
+      "source": "sense5",
+      "target": "proc1",
+      "data_size": 1.5,
+      "bandwidth_req": 0.1,
+      "latency_req": 900
+    }
+  ]
+}

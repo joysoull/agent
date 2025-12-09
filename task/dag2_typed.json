@@ -1,0 +1,140 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "id": "proc1",
+      "type": "proc",
+      "idx": 2
+    },
+    {
+      "id": "proc2",
+      "type": "proc",
+      "idx": 5
+    },
+    {
+      "id": "proc3",
+      "type": "proc",
+      "idx": 7
+    },
+    {
+      "id": "proc4",
+      "type": "proc",
+      "idx": 6
+    },
+    {
+      "id": "proc5",
+      "type": "proc",
+      "idx": 1
+    },
+    {
+      "id": "proc6",
+      "type": "proc",
+      "idx": 8
+    },
+    {
+      "id": "proc7",
+      "type": "proc",
+      "idx": 4
+    },
+    {
+      "id": "proc8",
+      "type": "proc",
+      "idx": 10
+    },
+    {
+      "id": "sense1",
+      "type": "sense",
+      "idx": 2
+    },
+    {
+      "id": "sense2",
+      "type": "sense",
+      "idx": 3
+    },
+    {
+      "id": "sense3",
+      "type": "sense",
+      "idx": 2
+    },
+    {
+      "id": "sense4",
+      "type": "sense",
+      "idx": 1
+    },
+    {
+      "id": "act1",
+      "type": "act",
+      "idx": 1
+    },
+    {
+      "id": "act2",
+      "type": "act",
+      "idx": 2
+    },
+    {
+      "id": "act3",
+      "type": "act",
+      "idx": 3
+    }
+  ],
+  "links": [
+    {
+      "source": "proc1",
+      "target": "proc2"
+    },
+    {
+      "source": "proc2",
+      "target": "proc3"
+    },
+    {
+      "source": "proc3",
+      "target": "act3"
+    },
+    {
+      "source": "proc4",
+      "target": "proc5"
+    },
+    {
+      "source": "proc4",
+      "target": "proc6"
+    },
+    {
+      "source": "proc5",
+      "target": "act1"
+    },
+    {
+      "source": "proc5",
+      "target": "act2"
+    },
+    {
+      "source": "proc6",
+      "target": "proc2"
+    },
+    {
+      "source": "proc7",
+      "target": "proc8"
+    },
+    {
+      "source": "proc8",
+      "target": "proc2"
+    },
+    {
+      "source": "sense1",
+      "target": "proc7"
+    },
+    {
+      "source": "sense2",
+      "target": "proc7"
+    },
+    {
+      "source": "sense3",
+      "target": "proc4"
+    },
+    {
+      "source": "sense4",
+      "target": "proc7"
+    }
+  ]
+}

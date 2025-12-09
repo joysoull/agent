@@ -1,0 +1,110 @@
+{
+  "directed": true,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "id": "proc1",
+      "type": "proc",
+      "idx": 1
+    },
+    {
+      "id": "proc2",
+      "type": "proc",
+      "idx": 8
+    },
+    {
+      "id": "proc3",
+      "type": "proc",
+      "idx": 7
+    },
+    {
+      "id": "proc4",
+      "type": "proc",
+      "idx": 4
+    },
+    {
+      "id": "proc5",
+      "type": "proc",
+      "idx": 9
+    },
+    {
+      "id": "sense1",
+      "type": "sense",
+      "idx": 2
+    },
+    {
+      "id": "sense2",
+      "type": "sense",
+      "idx": 3
+    },
+    {
+      "id": "act1",
+      "type": "act",
+      "idx": 3
+    },
+    {
+      "id": "act2",
+      "type": "act",
+      "idx": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "proc1",
+      "target": "proc2",
+      "data_size": 0.8,
+      "bandwidth_req": 0.16,
+      "latency_req": 852
+    },
+    {
+      "source": "proc1",
+      "target": "proc3",
+      "data_size": 0.8,
+      "bandwidth_req": 0.91,
+      "latency_req": 944
+    },
+    {
+      "source": "proc2",
+      "target": "act1",
+      "data_size": 0.6,
+      "bandwidth_req": 0.31,
+      "latency_req": 868
+    },
+    {
+      "source": "proc2",
+      "target": "act2",
+      "data_size": 0.8,
+      "bandwidth_req": 0.22,
+      "latency_req": 974
+    },
+    {
+      "source": "proc3",
+      "target": "proc4",
+      "data_size": 1.4,
+      "bandwidth_req": 0.53,
+      "latency_req": 914
+    },
+    {
+      "source": "proc3",
+      "target": "proc5",
+      "data_size": 1.7,
+      "bandwidth_req": 0.27,
+      "latency_req": 639
+    },
+    {
+      "source": "sense1",
+      "target": "proc1",
+      "data_size": 1.1,
+      "bandwidth_req": 0.48,
+      "latency_req": 787
+    },
+    {
+      "source": "sense2",
+      "target": "proc1",
+      "data_size": 1.6,
+      "bandwidth_req": 0.71,
+      "latency_req": 994
+    }
+  ]
+}
