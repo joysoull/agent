@@ -108,28 +108,69 @@ class TaskGraph:
         return list(self.G.edges(data=True))
 
 
-def build_agent_instances(folder="partiation", prefix="agents_", count=10):
+def _normalize_module_entry(module: dict) -> Tuple[Optional[int], Optional[int], List[str]]:
+    """兼容读取 Stage-1 输出的 module 信息."""
+
+    def _get_value(d: dict, keys):
+        for k in keys:
+            if k in d:
+                return d[k]
+        return None
+
+    module_id = _get_value(module, ["Module ID", "module_id"])
+    agent_id = _get_value(module, ["Agent ID", "agent_id"])
+    nodes = _get_value(module, ["Nodes", "nodes"]) or []
+    return module_id, agent_id, nodes
+
+
+def build_agent_instances(
+    folder: str = "partiation",
+    prefix: str = "agents_",
+    count: int = 10,
+    cpsat_path: str = "plans_cpsat.json",
+):
     """
     返回：
       instances         : [(task_id, module_id, agent_id), ...]
       module_node_map   : {(task_id, node_id): (task_id, module_id)}
+
+    支持两种 Stage-1 输出格式：
+    1) GRASP/LNS：partiation/agents_{task_id}.json，每个文件包含模块列表。
+    2) CP-SAT：plans_cpsat.json，顶层列表，每个元素带 task_id + modules。
     """
-    instances = []
-    node_map = {}
+    instances: List[Tuple[int, int, int]] = []
+    node_map: Dict[Tuple[int, str], Tuple[int, int]] = {}
+
+    if os.path.exists(cpsat_path):
+        with open(cpsat_path, "r") as f:
+            plans = json.load(f)
+
+        for idx, plan in enumerate(plans, start=1):
+            task_id = plan.get("task_id", idx)
+            for module in plan.get("modules", []):
+                module_id, agent_id, nodes = _normalize_module_entry(module)
+                if module_id is None or agent_id is None:
+                    continue
+                instances.append((task_id, int(module_id), int(agent_id)))
+                for node in nodes:
+                    node_map[(task_id, node)] = (task_id, int(module_id))
+        return instances, node_map
+
     for task_id in range(1, count + 1):
         path = os.path.join(folder, f"{prefix}{task_id}.json")
         if not os.path.exists(path):
             continue
         with open(path, "r") as f:
             modules = json.load(f)
-        for m in modules:
-            module_id = m["Module ID"]
-            agent_id = m["Agent ID"]
-            instances.append((task_id, module_id, agent_id))
+        for module in modules:
+            module_id, agent_id, nodes = _normalize_module_entry(module)
+            if module_id is None or agent_id is None:
+                continue
+            instances.append((task_id, int(module_id), int(agent_id)))
 
             # 建立 node -> module 的映射
-            for node in m["Nodes"]:
-                node_map[(task_id, node)] = (task_id, module_id)
+            for node in nodes:
+                node_map[(task_id, node)] = (task_id, int(module_id))
     return instances, node_map
 
 
