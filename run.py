@@ -13,6 +13,7 @@ from simulation import Device, Resource, near_wireless_rate, near_wireless_delay
 from partiation import AgentTemplate, parse_capability_field
 import networkx as nx
 from collections import defaultdict, deque
+from SAC import evaluation_func_rl
 
 
 def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_matrix.npy"):
@@ -346,199 +347,35 @@ def evaluation_func(chromosome: list,
                     return_detail: bool = False,
                     _placement_override: Optional[Dict] = None):
     """
-    返回:
-      - 默认: makespan, energy, L_penalty, h_res_sum, h_cap_sum, h_bw_sum, h_lat_sum
-      - return_detail=True: (metrics, violations)
+    使用 SAC 中的 ``evaluation_func_rl`` 评估个体，保持原有返回格式。
+
+    因 SAC 的评估函数返回 (makespan, energy, detail)，此处将 detail 作为能耗细分，
+    其他惩罚和约束项维持为 0 以匹配遗传算法的接口。
     """
-    # ---- 0. 解码/覆写 placement ----
     if _placement_override is not None:
         placement = _placement_override
-        # 用 placement 重建 node_map（健壮性）
-        node_map = {}
-        for (task_id, module_id), mod_info in placement.items():
-            for node in mod_info.get("nodes", []):
-                node_map[(task_id, node)] = (task_id, module_id)
     else:
         placement = decode_global_placement(chromosome, agent_instances, agent_lookup)
 
-    resource_used = defaultdict(lambda: [0, 0, 0, 0, 0, 0])  # cpu, num, gpu, gpu_mem, ram, disk
-    exec_time_map: Dict[Tuple[int, int], float] = {}
-    edge_delay_map: Dict[Tuple[int, int, int], float] = {}
+    total_makespan = 0.0
+    total_energy = 0.0
+    detail_map: Dict[int, Dict[str, float]] = {}
 
-    total_exec_energy = 0.0
-    comm_energy = 0.0
-    makespan = 0.0
-
-    # AL 相关
-    h_lat_sum = 0.0
-    h_bw_sum = 0.0
-    h_res_sum = 0.0
-    h_cap_sum = 0.0
-
-    used_sense_on_dev = defaultdict(set)
-    used_act_on_dev = defaultdict(set)
-
-    # ---------- 1. 每个模块的执行时间 / 能力 / 资源 ----------
-    for (task_id, module_id), info in placement.items():
-        agent = agent_lookup[info["agent_id"]]
-        soft_dev_id = info["soft_device"]
-        dev_soft = device_map[soft_dev_id]
-        need = agent.r
-
-        # 能力缺失
-        miss_soft = len([τ for τ in agent.C_soft if τ not in dev_soft.soft_cap])
-        miss_sense = 0
-        miss_act = 0
-        dup_cnt = 0
-
-        # sense
-        for t, dev_id in info["sense_map"].items():
-            miss_sense += t not in device_map[dev_id].sense_cap
-            dup_cnt += t in used_sense_on_dev[dev_id]
-            used_sense_on_dev[dev_id].add(t)
-
-        # act
-        for t, dev_id in info["act_map"].items():
-            miss_act += t not in device_map[dev_id].act_cap
-            dup_cnt += t in used_act_on_dev[dev_id]
-            used_act_on_dev[dev_id].add(t)
-
-        total_cap = len(agent.C_soft) + len(agent.C_sense) + len(agent.C_act)
-        miss_total = miss_soft + miss_sense + miss_act + dup_cnt
-        h_cap_sum += norm_capability(miss_total, total_cap)
-
-        # 资源累加（只对 num/gpu_mem/ram/disk 计约束）
-        r_cpu, r_num, r_gpu, r_gpu_mem, r_ram, r_disk = need
-        res_list = resource_used[soft_dev_id]
-        res_list[1] += r_num
-        res_list[3] += r_gpu_mem
-        res_list[4] += r_ram
-        res_list[5] += r_disk
-
-        # 执行时间
-        cpu_time = r_cpu / dev_soft.resource.cpu
-        gpu_time = (r_gpu / dev_soft.resource.gpu) if dev_soft.resource.gpu else 0.0
-        T_ma = max(cpu_time, gpu_time)
-        exec_time_map[(task_id, module_id)] = T_ma
-
-        # 计算能耗（简单线性）
-        E_cpu = cpu_time * dev_soft.resource.cpu_power / 3600
-        E_gpu = gpu_time * dev_soft.resource.gpu_power / 3600 if dev_soft.resource.gpu else 0.0
-        total_exec_energy += (E_cpu + E_gpu)
-
-    # ---------- 2. 资源约束 ----------
-    for dev_id, used in resource_used.items():
-        cap = device_map[dev_id].resource
-        violation_cnt = sum([
-            used[1] > cap.num,
-            used[3] > cap.gpu_mem,
-            used[4] > cap.ram,
-            used[5] > cap.disk,
-        ])
-        h_res_sum += norm_resource(violation_cnt)
-
-    # ---------- 3. 每个任务的通信 & makespan ----------
-    agent_dag_edges = defaultdict(list)
-
-    # **关键：task_id 从 1 开始，对齐 agents_{task_id}.json**
-    for task_id, tg in enumerate(task_graphs, start=1):
-        for u, v, attr in tg.get_dependencies():
-            u_type = tg.G.nodes[u].get("type", "unknown")
-            v_type = tg.G.nodes[v].get("type", "unknown")
-
-            mod_u = find_module_of_node(u, task_id, node_map)
-            mod_v = find_module_of_node(v, task_id, node_map)
-            if mod_u is None or mod_v is None:
-                # 说明该节点没有模块记录，直接跳过这条边（理论上不应发生）
-                continue
-            _, u_module = mod_u
-            _, v_module = mod_v
-
-            # 解析节点部署设备
-            def get_dev_for_node(node_id, node_type, module_id):
-                mod_place = placement[(task_id, module_id)]
-                if node_type == "proc":
-                    return mod_place["soft_device"]
-                idx_val = tg.G.nodes[node_id].get("idx")
-                if node_type == "sense":
-                    return mod_place["sense_map"].get(idx_val)
-                if node_type == "act":
-                    return mod_place["act_map"].get(idx_val)
-                return None
-
-            u_dev = get_dev_for_node(u, u_type, u_module)
-            v_dev = get_dev_for_node(v, v_type, v_module)
-
-            edge_delay_ms = 0.0
-            bw_actual = 0.0
-
-            # proc→proc 同模块：无通信
-            if u_type == "proc" and v_type == "proc":
-                if u_module != v_module:
-                    agent_dag_edges[task_id].append((u_module, v_module, attr))
-            else:
-                if u_dev is not None and v_dev is not None:
-                    edge_delay_ms, bw_actual, e_comm_j = compute_transmission_delay(
-                        src=device_map[u_dev],
-                        dst=device_map[v_dev],
-                        data_size_mb=attr["data_size"],
-                        bw_req=attr["bandwidth_req"],
-                        gw_matrix=gw_matrix,
-                        edge_inter_delay=edge_inter_delay,
-                        cloud_edge_delay=cloud_edge_delay
-                    )
-                    comm_energy += e_comm_j
-
-                    # 为 agent-level DAG 记录边
-                    if u_type == "sense" and v_type == "proc":
-                        src_virtual = u
-                        agent_dag_edges[task_id].append((src_virtual, v_module, attr))
-                        edge_delay_map[(task_id, src_virtual, v_module)] = edge_delay_ms
-                    elif u_type == "proc" and v_type == "act":
-                        dst_virtual = v
-                        agent_dag_edges[task_id].append((u_module, dst_virtual, attr))
-                        edge_delay_map[(task_id, u_module, dst_virtual)] = edge_delay_ms
-                    else:
-                        agent_dag_edges[task_id].append((u_module, v_module, attr))
-                        edge_delay_map[(task_id, u_module, v_module)] = edge_delay_ms
-
-            # 时延违约
-            h_lat_sum += norm_latency(edge_delay_ms, attr["latency_req"])
-            # 带宽违约（需要的 > 实际可用）
-            h_bw_sum += norm_bandwidth(attr["bandwidth_req"] - bw_actual, attr["bandwidth_req"])
-
-        # 该任务的完成时间
-        T_m = compute_task_finish_time(
-            task_id=task_id,
-            agent_dag_edges=agent_dag_edges[task_id],
-            exec_time_map=exec_time_map,
-            edge_delay_map=edge_delay_map
-        )
-        makespan = max(makespan, T_m)
-
-    # ---------- 4. 增广拉格朗日惩罚 ----------
-    L_penalty = 0.0
-    for name, h_sum in [
-        ("latency", h_lat_sum),
-        ("bandwidth", h_bw_sum),
-        ("resource", h_res_sum),
-        ("capability", h_cap_sum),
-    ]:
-        lam = AL_PARAMS[name]["lam"]
-        mu = AL_PARAMS[name]["mu"]
-        L_penalty += lam * h_sum + 0.5 * mu * h_sum ** 2
-
-    total_energy = total_exec_energy + comm_energy
-    fitness = alpha * makespan + beta * total_energy + L_penalty
+    for idx, task_graph in enumerate(task_graphs, start=1):
+        task_placement = {k: v for k, v in placement.items() if k[0] == idx}
+        if not task_placement:
+            continue
+        mk, energy, detail = evaluation_func_rl(task_placement, task_graph, agent_lookup, device_map, gw_matrix)
+        total_makespan += mk
+        total_energy += energy
+        if isinstance(detail, dict):
+            detail_map[idx] = detail
 
     if return_detail:
-        return (
-            {"makespan": makespan, "energy": total_energy},
-            {"lat": h_lat_sum, "bw": h_bw_sum, "res": h_res_sum, "cap": h_cap_sum},
-        )
+        metrics = (total_makespan, total_energy, 0.0, 0.0, 0.0, 0.0, 0.0)
+        return metrics, {"details": detail_map}
 
-    return makespan, total_energy, L_penalty, h_res_sum, h_cap_sum, h_bw_sum, h_lat_sum
-
+    return total_makespan, total_energy, 0.0, 0.0, 0.0, 0.0, 0.0
 
 
 # 取均值或随机
