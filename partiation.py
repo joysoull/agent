@@ -1,14 +1,155 @@
 # pip install ortools
+import ast
 import time
 
+import numpy as np
 import pandas as pd
 from ortools.sat.python import cp_model
 import re, json, hashlib
 from typing import List, Dict, Set, Tuple, Any
 import networkx as nx
 
-from SAC import TaskGraph, load_infrastructure, build_agent_lookup
-from sub_partiation import AgentTemplate
+from simulation import Device, Resource
+
+
+class AgentTemplate:
+    def __init__(self, agent_id, C_sense, C_act, C_soft, r=None):
+        self.id = agent_id
+        self.C_sense = set(C_sense)
+        self.C_act = set(C_act)
+        self.C_soft = set(C_soft)
+        self.r = r  # 资源，可选
+
+    def covers(self, C_sense, C_act, C_soft) -> bool:
+        return (C_sense.issubset(self.C_sense) and
+                C_act.issubset(self.C_act) and
+                C_soft.issubset(self.C_soft))
+
+    def total_capability_size(self):
+        return len(self.C_sense | self.C_act | self.C_soft)
+
+
+
+# 解析集合字符串字段
+def parse_capability_field(cell):
+    try:
+        sets = ast.literal_eval(cell)
+        if isinstance(sets, list) and len(sets) > 0:
+            return set().union(*sets)
+        return set()
+    except Exception:
+        return set()
+
+def build_agent_lookup(df) -> Dict[int, AgentTemplate]:
+    lookup = {}
+    for _, row in df.iterrows():
+        agent_id = row["Agent ID"]
+        C_sense = parse_capability_field(row["Sense Capabilities"])
+        C_act = parse_capability_field(row["Act Capabilities"])
+        C_soft = parse_capability_field(row["Soft Capabilities"])
+        r = (
+            row["CPU (FLOPs)"] * 1e9,
+            row["CPU Count"],
+            row["GPU (FLOPs)"] * 1e12,
+            row["GPU Memory (GB)"],
+            row["RAM (GB)"],
+            row["Disk (GB)"]
+        )
+        lookup[agent_id] = AgentTemplate(agent_id, C_sense, C_act, C_soft, r)
+    return lookup
+
+class TaskGraph:
+    def __init__(self):
+        self.G = nx.DiGraph()
+        self.id = 0
+
+    def load_from_json(self, json_data, task_id):
+        self.id = task_id
+        # 加载节点
+        for node in json_data["nodes"]:
+            node_id = node["id"]
+            node_type = node.get("type", "proc")
+            idx = node.get("idx", -1)
+
+            self.G.add_node(node_id, type=node_type, idx=idx)
+
+        # 加载边
+        for link in json_data["links"]:
+            source = link["source"]
+            target = link["target"]
+
+            self.G.add_edge(
+                source, target,
+                data_size=link["data_size"],  # MB
+                bandwidth_req=link["bandwidth_req"],  # Mbps
+                latency_req=link["latency_req"]  # ms
+            )
+
+    def get_proc_nodes(self):
+        return [n for n, attr in self.G.nodes(data=True) if attr['type'] == 'proc']
+
+    def get_sense_nodes(self):
+        return [n for n, attr in self.G.nodes(data=True) if attr['type'] == 'sense']
+
+    def get_act_nodes(self):
+        return [n for n, attr in self.G.nodes(data=True) if attr['type'] == 'act']
+
+    def get_all_capability_nodes(self):
+        return list(self.G.nodes)
+
+    def get_dependencies(self):
+        return list(self.G.edges(data=True))
+
+def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_matrix.npy"):
+    # 读取 JSON 文件
+    with open(config_path, "r") as f:
+        data = json.load(f)
+
+    # 解析云服务器
+    cloud_data = data["cloud_server"]
+    cloud = Device(
+        type=cloud_data["type"],
+        id=cloud_data["id"],
+        resource=Resource(**cloud_data["resource"]),
+        act_cap=set(cloud_data["act_cap"]),
+        sense_cap=set(cloud_data["sense_cap"]),
+        soft_cap=set(cloud_data["soft_cap"]),
+        bandwidth=cloud_data["bandwidth"],
+        delay=cloud_data["delay"],
+    )
+
+    # 解析 IoT 设备列表
+    device_list = []
+    for dev in data["device_list"]:
+        device_list.append(Device(
+            type=dev["type"],
+            id=dev["id"],
+            resource=Resource(**dev["resource"]),
+            act_cap=set(dev["act_cap"]),
+            sense_cap=set(dev["sense_cap"]),
+            soft_cap=set(dev["soft_cap"]),
+            bandwidth=dev["bandwidth"],
+            delay=dev["delay"],
+        ))
+
+    # 解析边缘服务器列表
+    edge_list = []
+    for edge in data["edge_server_list"]:
+        edge_list.append(Device(
+            type=edge["type"],
+            id=edge["id"],
+            resource=Resource(**edge["resource"]),
+            act_cap=set(edge["act_cap"]),
+            sense_cap=set(edge["sense_cap"]),
+            soft_cap=set(edge["soft_cap"]),
+            bandwidth=edge["bandwidth"],
+            delay=edge["delay"],
+        ))
+
+    # 读取网关矩阵
+    gw_matrix = np.load(gw_path)
+
+    return cloud, device_list, edge_list, gw_matrix
 
 
 # ============ 工具：从节点属性/名称解析能力ID ============

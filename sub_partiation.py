@@ -517,15 +517,6 @@ import json
 from networkx.readwrite import json_graph
 
 
-# 解析集合字符串字段
-def parse_capability_field(cell):
-    try:
-        sets = ast.literal_eval(cell)
-        if isinstance(sets, list) and len(sets) > 0:
-            return set().union(*sets)
-        return set()
-    except Exception:
-        return set()
 
 
 def get_node_capability(node_attrs: Dict) -> Tuple[str, int]:
