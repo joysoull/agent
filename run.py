@@ -10,7 +10,7 @@ import pandas as pd
 from simulation import Device, Resource, near_wireless_rate, near_wireless_delay, far_wireless_rate, far_wireless_delay, \
     edge_inter_delay, cloud_edge_delay, device_number
 
-from sub_partiation import AgentTemplate, parse_capability_field
+from partiation import AgentTemplate, parse_capability_field
 import networkx as nx
 from collections import defaultdict, deque
 
