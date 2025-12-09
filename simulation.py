@@ -207,4 +207,5 @@ class Gateway:
     P_tx: float  # 网关发送功率 (W)
     P_rx: float  # 网关接收功耗 (W)
     h_gain: float  # 信道增益 (无量纲)
+
 create_device()
