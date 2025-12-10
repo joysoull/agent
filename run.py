@@ -1,5 +1,3 @@
-import ast
-import copy
 import json
 import os
 import random
@@ -7,12 +5,10 @@ from typing import List, Tuple, Dict, Optional
 import math
 import numpy as np
 import pandas as pd
-from simulation import Device, Resource, near_wireless_rate, near_wireless_delay, far_wireless_rate, far_wireless_delay, \
-    edge_inter_delay, cloud_edge_delay, device_number
-
+from simulation import Device, Resource, device_number
 from partiation import AgentTemplate, parse_capability_field
 import networkx as nx
-from collections import defaultdict, deque
+from collections import  deque
 from SAC import evaluation_func_rl
 
 
@@ -26,6 +22,7 @@ def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_ma
     cloud = Device(
         type=cloud_data["type"],
         id=cloud_data["id"],
+        conn_type=cloud_data.get("conn_type", "wired"),
         resource=Resource(**cloud_data["resource"]),
         act_cap=set(cloud_data["act_cap"]),
         sense_cap=set(cloud_data["sense_cap"]),
@@ -40,6 +37,7 @@ def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_ma
         device_list.append(Device(
             type=dev["type"],
             id=dev["id"],
+            conn_type=dev.get("conn_type", "wired"),
             resource=Resource(**dev["resource"]),
             act_cap=set(dev["act_cap"]),
             sense_cap=set(dev["sense_cap"]),
@@ -54,6 +52,7 @@ def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_ma
         edge_list.append(Device(
             type=edge["type"],
             id=edge["id"],
+            conn_type=edge.get("conn_type", "wired"),
             resource=Resource(**edge["resource"]),
             act_cap=set(edge["act_cap"]),
             sense_cap=set(edge["sense_cap"]),
@@ -209,13 +208,6 @@ def attach_nodes_to_placement(
     return new_placement
 
 
-def find_module_of_node(node: str,
-                        task_id: int,
-                        module_node_map: dict):
-    """
-    返回 (task_id, module_id) 或 None
-    """
-    return module_node_map.get((task_id, node))
 
 
 def build_agent_lookup(df) -> Dict[int, AgentTemplate]:
@@ -235,30 +227,6 @@ def build_agent_lookup(df) -> Dict[int, AgentTemplate]:
         )
         lookup[agent_id] = AgentTemplate(agent_id, C_sense, C_act, C_soft, r)
     return lookup
-
-
-def encode_global_placement(agent_instances: List[Tuple[int, int, int]],
-                            agent_lookup: Dict[int, AgentTemplate],
-                            all_devices: List[int]) -> List[int]:
-    """
-    返回整数列表:
-      [ soft₀ , sense₀₁ , … , act₀₁ , … ,  soft₁ , sense₁₁ , … ]
-    """
-    chromosome = []
-    for (_, _, agent_id) in agent_instances:
-        tpl = agent_lookup[agent_id]
-
-        # soft (整体部署到一个设备)
-        chromosome.append(random.choice(all_devices))
-
-        # 每个 sense 能力一个设备
-        for _ in tpl.C_sense:
-            chromosome.append(random.choice(all_devices[1:device_number]))
-
-        # 每个 act 能力一个设备
-        for _ in tpl.C_act:
-            chromosome.append(random.choice(all_devices[1:device_number]))
-    return chromosome
 
 
 def decode_global_placement(chromosome: List[int],
@@ -306,22 +274,6 @@ AL_PARAMS = {
 N_RES_DIM = 4  # cpu_num, gpu_mem, ram, disk 四维
 
 
-def norm_latency(actual, req):
-    return max(0.0, actual - req) / req  # ∈[0,∞) 但一般<1
-
-
-def norm_bandwidth(actual, req):
-    return max(0.0, req - actual) / req
-
-
-def norm_resource(violation_cnt):
-    return violation_cnt / N_RES_DIM  # 最多=1
-
-
-def norm_capability(missing, total):
-    return 0.0 if total == 0 else missing / total
-
-
 def evaluation_func(chromosome: list,
                     agent_instances: list,
                     agent_lookup: Dict[int, AgentTemplate],
@@ -367,10 +319,6 @@ def evaluation_func(chromosome: list,
     return total_makespan, total_energy, 0.0, 0.0, 0.0, 0.0, 0.0
 
 
-# 取均值或随机
-def mean_or_rand(rng):  # 传入 [low, high]
-    return random.randint(*rng)
-
 
 WHITE_NOISE = 1e-9  # W
 
@@ -385,185 +333,12 @@ E_edge, E_core = 37e-9, 12.6e-9  # J/bit
 E_cent = 20e-6  # J/bit
 E_per_bit_wired = h_e * E_edge + h_c * E_core + E_cent  # ≈2.075e‑5 J/bit
 
-
-def shannon_capacity(b_mhz, P_tx, h_gain, w0=WHITE_NOISE):
-    return b_mhz * 1e6 * math.log2(1 + P_tx * h_gain / w0)  # bit/s
-
-
-def compute_ul_dl_delay(data_mb, rate_mbps, prop_ms):
-    """data_mb / rate_mbps  (秒→ms) + 传播"""
-    return data_mb * 8 / rate_mbps * 1e3 + prop_ms
-
 # <<< NEW: 辅助函数，正确计算传输时间 >>>
 def _get_transmission_time_s(data_size_mb: float, rate_mbps: float) -> float:
     """计算数据传输所需的时间（秒），处理速率为0的情况。"""
     if rate_mbps <= 0:
         return float('inf') # 如果速率为0，传输时间为无穷大
     return (data_size_mb * 8) / rate_mbps
-
-def compute_transmission_delay(src, dst,
-                               data_size_mb,
-                               bw_req,  # 业务最小带宽需求，可用于速率下限
-                               gw_matrix,
-                               edge_inter_delay=1, cloud_edge_delay=20,
-                               ):
-    """
-    返回:
-    1. 总链路延迟 (ms)
-    2. 实际可用带宽 (Mbps), 用于违规检查
-    3. 总通信能耗 (J)
-    """
-    # ---------------- 0. 同设备 ----------------
-    if src.id == dst.id:
-        return 0.0, True, 0.0
-
-    # ---------- 类型布尔 ----------
-    src_iot = src.type == "Device"
-    dst_iot = dst.type == "Device"
-    src_edge = src.type == "Edge"
-    dst_edge = dst.type == "Edge"
-    src_cloud = src.type == "Cloud"
-    dst_cloud = dst.type == "Cloud"
-
-    bits = data_size_mb * 8 * 1e6  # 转 bit
-
-    # ---------- 辅助: 计算 UL / DL delay ----------
-    # ------- 子函数：UL / DL -------
-    # ------ UL / DL helper ------
-    # ------ UL / DL helper (已修正) ------
-    def ul_delay_energy(dev_iot):
-        # <<< FIX: 使用 dev_iot 的属性，而不是全局的 src >>>
-        rate = dev_iot.bandwidth
-        prop_delay = dev_iot.delay
-        gw_row = gw_matrix[dev_iot.id - 1]
-        gw_idx = np.where(gw_row > 0)[0][0]
-
-        # <<< FIX: 正确计算传输时间、总延迟和能耗 >>>
-        transmission_time_s = _get_transmission_time_s(data_size_mb, rate)
-        total_delay_ms = transmission_time_s * 1000 + prop_delay
-        energy_j = (P_TX_IOT + P_RX_AP) * transmission_time_s
-
-        # <<< FIX: 返回实际速率和以焦耳为单位的能耗 >>>
-        return total_delay_ms, rate, energy_j, gw_idx
-
-    def dl_delay_energy(dev_iot, gw_idx):
-        # <<< FIX: 使用 dev_iot 的属性 >>>
-        # 注意：下行速率可能与上行不同，这里为简化假设相同，实际可从dev_iot或gw获取
-        rate = dev_iot.bandwidth
-        prop_delay = dev_iot.delay
-
-        # <<< FIX: 正确计算 >>>
-        transmission_time_s = _get_transmission_time_s(data_size_mb, rate)
-        total_delay_ms = transmission_time_s * 1000 + prop_delay
-        energy_j = (P_TX_AP + P_RX_IOT) * transmission_time_s
-
-        # <<< FIX: 返回实际速率和以焦耳为单位的能耗 >>>
-        return total_delay_ms, rate, energy_j
-
-
-    # ------ 场景 1: IoT → IoT ------
-    if src_iot and dst_iot:
-        T_ul, rate_ul, E_ul, gw_u = ul_delay_energy(src)
-        T_dl, rate_dl, E_dl, = dl_delay_energy(dst, gw_u)
-        same_gw = gw_u == np.where(gw_matrix[dst.id - 1] > 0)[0][0]
-
-        total_delay = T_ul + T_dl + (0 if same_gw else edge_inter_delay)
-        total_energy = E_ul + E_dl
-        # <<< FIX: 返回瓶颈带宽 >>>
-        bottleneck_rate = min(rate_ul, rate_dl)
-        return total_delay, bottleneck_rate, total_energy
-
-    # ------ IoT → Edge ------
-    if src_iot and dst_edge:
-        T_ul, rate_ul, E_ul, _ = ul_delay_energy(src)
-        E_wired = E_per_bit_wired * bits
-        # <<< FIX: 返回正确的总延迟、实际带宽和总能耗 >>>
-        return T_ul + edge_inter_delay, rate_ul, E_ul + E_wired
-    # ------ IoT → Cloud ------
-    if src_iot and dst_cloud:
-        T_ul, rate_ul, E_ul, _ = ul_delay_energy(src)
-        E_wired = E_per_bit_wired * bits
-        return T_ul + cloud_edge_delay, rate_ul, E_ul + E_wired
-    # ------ Edge → IoT ------
-    if src_edge and dst_iot:
-        gw_idx = np.where(gw_matrix[dst.id - 1] > 0)[0][0]
-        T_dl, rate_dl, E_dl = dl_delay_energy(dst, gw_idx)
-        E_wired = E_per_bit_wired * bits
-        return T_dl + edge_inter_delay, rate_dl, E_dl + E_wired
-    # ------ Cloud → IoT ------
-    if src_cloud and dst_iot:
-        gw_idx = np.where(gw_matrix[dst.id - 1] > 0)[0][0]
-        T_dl, rate_dl, E_dl = dl_delay_energy(dst, gw_idx)
-        E_wired = E_per_bit_wired * bits
-        return T_dl + cloud_edge_delay, rate_dl, E_dl + E_wired
-    # --- 有线连接场景 ---
-    # 假设有线带宽远大于无线，不会成为瓶颈
-    WIRED_BANDWIDTH = 1000.0  # 假设 1 Gbps
-
-    # ------ Edge ↔ Edge ------
-    if src_edge and dst_edge:
-        E_wired = E_per_bit_wired * bits
-        # <<< FIX: 返回统一格式 (delay, bw, energy) >>>
-        return edge_inter_delay, WIRED_BANDWIDTH, E_wired
-
-    # ------ Cloud ↔ Edge ------
-    if (src_cloud and dst_edge) or (src_edge and dst_cloud):
-        E_wired = E_per_bit_wired * bits
-        # <<< FIX: 返回统一格式 >>>
-        return cloud_edge_delay, WIRED_BANDWIDTH, E_wired
-
-    # 默认情况，不应该发生
-    return float('inf'), 0.0, float('inf')
-
-
-def compute_task_finish_time(task_id,
-                             agent_dag_edges,  # [(from_mod, to_mod, data_attr), ...]
-                             exec_time_map,
-                             edge_delay_map):
-    """
-    返回 T_m_total （该任务 makespan）
-    agent_dag_edges: task 内的 agent 级 DAG 边列表
-    """
-    # 1. 构建邻接表 & 入度
-    succ = defaultdict(list)
-    indeg = defaultdict(int)
-    modules_in_task = set()
-
-    for u_mod, v_mod, attr in agent_dag_edges:
-        succ[u_mod].append(v_mod)
-        indeg[v_mod] += 1
-        modules_in_task.update([u_mod, v_mod])
-
-    # 源节点 = 入口虚拟 sensor 节点 (f=0)  或 indeg==0
-    earliest_finish = {}  # f_mi for modules & virtual sink
-    q = deque()
-
-    for mod in modules_in_task:
-        if indeg[mod] == 0:
-            earliest_finish[mod] = 0.0
-            q.append(mod)
-
-    # 2. 拓扑遍历
-    while q:
-        u = q.popleft()
-        base_finish = earliest_finish[u] + exec_time_map.get((task_id, u), 0.0)
-
-        for v in succ[u]:
-            # 累加延迟
-            edge_delay = edge_delay_map.get((task_id, u, v), 0.0)
-            candidate_time = base_finish + edge_delay
-            earliest_finish[v] = max(earliest_finish.get(v, 0.0), candidate_time)
-            indeg[v] -= 1
-            if indeg[v] == 0:
-                q.append(v)
-
-    # 3. 找到汇节点（没有后继）最大的 f
-    max_finish = 0.0
-    for mod in modules_in_task:
-        if not succ[mod]:  # 没有后继 == sink/drive
-            max_finish = max(max_finish,
-                             earliest_finish[mod])  # sink 不再加 exec（=0）
-    return max_finish
 
 
 class ABGSK:

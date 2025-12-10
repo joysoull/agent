@@ -193,6 +193,7 @@ class Resource:
 class Device:
     type: str  # "Device", "Edge", "Cloud"
     id: int
+    conn_type: str
     resource: Resource
     act_cap: Set[int]
     sense_cap: Set[int]

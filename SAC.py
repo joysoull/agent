@@ -6,30 +6,14 @@
 
 """
 import json
-import os
-import random
 from collections import defaultdict, deque
-import time
-from typing import Dict, List, Tuple, Any, Optional, cast
+from typing import Dict, List, Tuple, Any, Optional
 import hashlib
-import gymnasium as gym
 import networkx as nx
 import numpy as np
-import pandas as pd
-import torch
-
-from gymnasium import spaces
-from gymnasium.utils import seeding
-
-from stable_baselines3.common.callbacks import BaseCallback
-
-from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.monitor import Monitor  # 在文件顶部添加导入
-
-from cSAC import CSACConfig, ConstrainedDiscreteSAC, _to_torch_obs
-from simulation import Device, device_number, Resource
+from simulation import Device
 from sub_partiation import AgentTemplate
-from partiation import parse_capability_field
+
 
 WHITE_NOISE = 1e-9  # W
 
@@ -43,78 +27,6 @@ h_e, h_c = 3, 5
 E_edge, E_core = 37e-9, 12.6e-9  # J/bit
 E_cent = 20e-9  # J/bit
 E_per_bit_wired = h_e * E_edge + h_c * E_core + E_cent  # ≈2.075e‑5 J/bit
-
-
-def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_matrix.npy"):
-    # 读取 JSON 文件
-    with open(config_path, "r") as f:
-        data = json.load(f)
-
-    # 解析云服务器
-    cloud_data = data["cloud_server"]
-    cloud = Device(
-        type=cloud_data["type"],
-        id=cloud_data["id"],
-        resource=Resource(**cloud_data["resource"]),
-        act_cap=set(cloud_data["act_cap"]),
-        sense_cap=set(cloud_data["sense_cap"]),
-        soft_cap=set(cloud_data["soft_cap"]),
-        bandwidth=cloud_data["bandwidth"],
-        delay=cloud_data["delay"],
-    )
-
-    # 解析 IoT 设备列表
-    device_list = []
-    for dev in data["device_list"]:
-        device_list.append(Device(
-            type=dev["type"],
-            id=dev["id"],
-            resource=Resource(**dev["resource"]),
-            act_cap=set(dev["act_cap"]),
-            sense_cap=set(dev["sense_cap"]),
-            soft_cap=set(dev["soft_cap"]),
-            bandwidth=dev["bandwidth"],
-            delay=dev["delay"],
-        ))
-
-    # 解析边缘服务器列表
-    edge_list = []
-    for edge in data["edge_server_list"]:
-        edge_list.append(Device(
-            type=edge["type"],
-            id=edge["id"],
-            resource=Resource(**edge["resource"]),
-            act_cap=set(edge["act_cap"]),
-            sense_cap=set(edge["sense_cap"]),
-            soft_cap=set(edge["soft_cap"]),
-            bandwidth=edge["bandwidth"],
-            delay=edge["delay"],
-        ))
-
-    # 读取网关矩阵
-    gw_matrix = np.load(gw_path)
-
-    return cloud, device_list, edge_list, gw_matrix
-
-
-def build_agent_lookup(df) -> Dict[int, AgentTemplate]:
-    lookup = {}
-    for _, row in df.iterrows():
-        agent_id = row["Agent ID"]
-        C_sense = parse_capability_field(row["Sense Capabilities"])
-        C_act = parse_capability_field(row["Act Capabilities"])
-        C_soft = parse_capability_field(row["Soft Capabilities"])
-        r = (
-            row["CPU (FLOPs)"] * 1e9,
-            row["CPU Count"],
-            row["GPU (FLOPs)"] * 1e12,
-            row["GPU Memory (GB)"],
-            row["RAM (GB)"],
-            row["Disk (GB)"]
-        )
-        lookup[agent_id] = AgentTemplate(agent_id, C_sense, C_act, C_soft, r)
-    return lookup
-
 
 def _get_transmission_time_s(data_size_mb, rate_mbps):
     if rate_mbps <= 0:
@@ -136,7 +48,8 @@ def compute_transmission_delay(src, dst,
     """
     # ---------------- 0. 同设备 ----------------
     if src.id == dst.id:
-        return 0.0, True, 0.0
+        same_bw = max(getattr(src, "bandwidth", 0.0), getattr(dst, "bandwidth", 0.0))
+        return 0.0, same_bw, 0.0
 
     # ---------- 类型布尔 ----------
     src_iot = src.type == "Device"
@@ -149,44 +62,58 @@ def compute_transmission_delay(src, dst,
     bits = data_size_mb * 8 * 1e6  # 转 bit
 
     # ---------- 辅助: 计算 UL / DL delay ----------
-    # ------- 子函数：UL / DL -------
-    # ------ UL / DL helper ------
-    # ------ UL / DL helper (已修正) ------
+    def _get_gateway_idx(dev_iot):
+        if getattr(dev_iot, "conn_type", "wired") != "wireless":
+            return None
+        gw_row = gw_matrix[dev_iot.id - 1]
+        if not np.any(gw_row > 0):
+            return None
+        return int(np.where(gw_row > 0)[0][0])
+
+    def _wired_delay_energy(dev_iot):
+        rate = dev_iot.bandwidth
+        prop_delay = dev_iot.delay
+        transmission_time_s = _get_transmission_time_s(data_size_mb, rate)
+        total_delay_ms = transmission_time_s * 1000 + prop_delay
+        energy_j = E_per_bit_wired * bits
+        return total_delay_ms, rate, energy_j
 
     def ul_delay_energy(dev_iot):
-        # <<< FIX: 使用 dev_iot 的属性，而不是全局的 src >>>
+        if getattr(dev_iot, "conn_type", "wired") != "wireless":
+            delay_ms, rate, energy_j = _wired_delay_energy(dev_iot)
+            return delay_ms, rate, energy_j, None
+
         rate = dev_iot.bandwidth  # Mbps
         prop_delay = dev_iot.delay  # ms
-        gw_row = gw_matrix[dev_iot.id - 1]
-        gw_idx = int(np.where(gw_row > 0)[0][0]) if np.any(gw_row > 0) else -1
+        gw_idx = _get_gateway_idx(dev_iot)
+        if gw_idx is None:
+            return float("inf"), 0.0, float("inf"), None
 
-        # <<< FIX: 正确计算传输时间、总延迟和能耗 >>>
         transmission_time_s = _get_transmission_time_s(data_size_mb, rate)
         total_delay_ms = transmission_time_s * 1000 + prop_delay
         energy_j = (P_TX_IOT + P_RX_AP) * transmission_time_s
-
-        # <<< FIX: 返回实际速率和以焦耳为单位的能耗 >>>
         return total_delay_ms, rate, energy_j, gw_idx
 
     def dl_delay_energy(dev_iot, gw_idx):
-        # <<< FIX: 使用 dev_iot 的属性 >>>
-        # 注意：下行速率可能与上行不同，这里为简化假设相同，实际可从dev_iot或gw获取
+        if getattr(dev_iot, "conn_type", "wired") != "wireless":
+            return _wired_delay_energy(dev_iot)
+
+        if gw_idx is None:
+            return float("inf"), 0.0, float("inf")
+
         rate = dev_iot.bandwidth
         prop_delay = dev_iot.delay
-
-        # <<< FIX: 正确计算 >>>
         transmission_time_s = _get_transmission_time_s(data_size_mb, rate)
         total_delay_ms = transmission_time_s * 1000 + prop_delay
         energy_j = (P_TX_AP + P_RX_IOT) * transmission_time_s
-
-        # <<< FIX: 返回实际速率和以焦耳为单位的能耗 >>>
         return total_delay_ms, rate, energy_j
 
     # ------ 场景 1: IoT → IoT ------
     if src_iot and dst_iot:
         T_ul, rate_ul, E_ul, gw_u = ul_delay_energy(src)
-        T_dl, rate_dl, E_dl, = dl_delay_energy(dst, gw_u)
-        same_gw = gw_u == np.where(gw_matrix[dst.id - 1] > 0)[0][0]
+        dst_gw = _get_gateway_idx(dst)
+        T_dl, rate_dl, E_dl, = dl_delay_energy(dst, dst_gw)
+        same_gw = gw_u is not None and dst_gw is not None and gw_u == dst_gw
 
         total_delay = T_ul + T_dl + (0 if same_gw else edge_inter_delay)
         total_energy = E_ul + E_dl
@@ -207,13 +134,13 @@ def compute_transmission_delay(src, dst,
         return T_ul + cloud_edge_delay, rate_ul, E_ul + E_wired
     # ------ Edge → IoT ------
     if src_edge and dst_iot:
-        gw_idx = np.where(gw_matrix[dst.id - 1] > 0)[0][0]
+        gw_idx = _get_gateway_idx(dst)
         T_dl, rate_dl, E_dl = dl_delay_energy(dst, gw_idx)
         E_wired = E_per_bit_wired * bits
         return T_dl + edge_inter_delay, rate_dl, E_dl + E_wired
     # ------ Cloud → IoT ------
     if src_cloud and dst_iot:
-        gw_idx = np.where(gw_matrix[dst.id - 1] > 0)[0][0]
+        gw_idx = _get_gateway_idx(dst)
         T_dl, rate_dl, E_dl = dl_delay_energy(dst, gw_idx)
         E_wired = E_per_bit_wired * bits
         return T_dl + cloud_edge_delay, rate_dl, E_dl + E_wired
@@ -362,112 +289,6 @@ def _dag_fingerprint(G: nx.DiGraph) -> str:
     return m.hexdigest()
 
 
-def serialize_partition_plan(G: nx.DiGraph, plan: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    新式版本：serialize_partition_plan(G, plan)
-
-    plan 需要包含:
-      - "task_id": int
-      - "objective": float (可选)
-      - "modules": [
-            {
-              "module_id": int,
-              "agent_id": int,
-              "nodes": Iterable[str or int]
-            }, ...
-        ]
-
-    返回统一 JSON friendly 结构:
-    {
-      "fingerprint": <str>,
-      "task_id": <int>,
-      "objective": <float or None>,
-      "modules": [
-        {"module_id": int, "agent_id": int, "nodes": [str, ...]}, ...
-      ]
-    }
-    """
-
-    def _norm_nodes(seq) -> List[str]:
-        # 节点ID统一转字符串 & 排序
-        return sorted([str(x) for x in seq])
-
-    out_modules: List[Dict[str, Any]] = []
-    for m in plan.get("modules", []):
-        out_modules.append({
-            "module_id": int(m["module_id"]),
-            "agent_id": int(m.get("agent_id", -1)),
-            "nodes": _norm_nodes(m["nodes"]),
-        })
-    out_modules.sort(key=lambda x: x["module_id"])
-
-    return {
-        "fingerprint": _dag_fingerprint(G),
-        "task_id": int(plan.get("task_id", -1)),
-        "objective": (
-            None if plan.get("objective") is None
-            else float(plan["objective"])
-        ),
-        "modules": out_modules,
-    }
-
-
-def save_partition_plans(plans_by_task: Dict[int, Dict[str, Any]], path: str):
-    """
-    plans_by_task: { task_id -> serialized_plan_dict }
-    """
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(plans_by_task, f, ensure_ascii=False, indent=2)
-
-
-def load_partition_plans(path: str) -> Dict[int, Dict[str, Any]]:
-    with open(path, "r", encoding="utf-8") as f:
-        raw = json.load(f)
-    # 兼容两种格式：字典或列表
-    if isinstance(raw, list):
-        return {int(p["task_id"]): p for p in raw}
-    elif isinstance(raw, dict):
-        # 可能是 {task_id: plan} 或 {"plans":[...]}
-        if "plans" in raw and isinstance(raw["plans"], list):
-            return {int(p["task_id"]): p for p in raw["plans"]}
-        return {int(k): v for k, v in raw.items()}
-    else:
-        raise ValueError("Unknown JSON format for precomputed plans")
-
-
-def realize_plan_to_modules_queue(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    将序列化的 plan 转回 env 的 modules_queue 结构。
-    """
-    out = []
-    for m in sorted(plan["modules"], key=lambda x: x["module_id"]):
-        out.append({
-            "module_id": int(m["module_id"]),
-            "agent_id": int(m["agent_id"]),
-            "nodes": set(m["nodes"]),  # env 内部用 set
-        })
-    return out
-
-
-# --- 全局辅助函数 ---
-def get_module_capabilities(G: nx.DiGraph, nodes: set) -> Tuple[set, set, set]:
-    C_sense, C_act, C_soft = set(), set(), set()
-    for node in nodes:
-        if node not in G.nodes:
-            continue
-        node_type = G.nodes[node].get("type")
-        idx = G.nodes[node].get("idx")
-        if node_type == "sense":
-            C_sense.add(idx)
-        elif node_type == "act":
-            C_act.add(idx)
-        elif node_type == "proc":
-            C_soft.add(idx)
-    return C_sense, C_act, C_soft
-
-
-def get_agent_capabilities(agent: AgentTemplate) -> Tuple[set, set, set]:
-    return agent.C_sense, agent.C_act, agent.C_soft
 
 
 # 你提供的用于计算 makespan 的函数，我们把它放在这里以确保依赖完整
