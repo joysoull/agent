@@ -132,47 +132,81 @@ def build_agent_instances(
 ):
     """
     返回：
-      instances         : [(task_id, module_id, agent_id), ...]
-      module_node_map   : {(task_id, node_id): (task_id, module_id)}
+      instances       : [(task_id, module_id, agent_id), ...]
+      module_node_map : {(task_id, node_id): (task_id, module_id)}
 
     支持两种 Stage-1 输出格式：
     1) GRASP/LNS：partiation/agents_{task_id}.json，每个文件包含模块列表。
-    2) CP-SAT：plans_cpsat.json，顶层列表，每个元素带 task_id + modules。
+    2) CP-SAT：plans_cpsat.json，可为：
+       - 顶层 list: [ {task_id, modules:[...]} , ... ]
+       - 顶层 dict: { task_id: { ... }, ... } 或 { "plans":[...]}
     """
     instances: List[Tuple[int, int, int]] = []
     node_map: Dict[Tuple[int, str], Tuple[int, int]] = {}
 
+    # ---------- 优先使用 CP-SAT 结果 ----------
     if os.path.exists(cpsat_path):
-        with open(cpsat_path, "r") as f:
-            plans = json.load(f)
+        with open(cpsat_path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
 
-        for idx, plan in enumerate(plans, start=1):
-            task_id = plan.get("task_id", idx)
+        # 统一成一个可迭代的 plans 列表
+        if isinstance(raw, list):
+            plans_iter = raw
+        elif isinstance(raw, dict):
+            # 兼容 {"plans":[...]} 或 {task_id: plan, ...}
+            if "plans" in raw and isinstance(raw["plans"], list):
+                plans_iter = raw["plans"]
+            else:
+                plans_iter = list(raw.values())
+        else:
+            raise ValueError(f"Unsupported CP-SAT JSON format: {type(raw)}")
+
+        for idx, plan in enumerate(plans_iter, start=1):
+            task_id = int(plan.get("task_id", idx))
+
             for module in plan.get("modules", []):
                 module_id, agent_id, nodes = _normalize_module_entry(module)
                 if module_id is None or agent_id is None:
                     continue
-                instances.append((task_id, int(module_id), int(agent_id)))
-                for node in nodes:
-                    node_map[(task_id, node)] = (task_id, int(module_id))
+                module_id = int(module_id)
+                agent_id = int(agent_id)
+
+                # 记录 (task, module, agent)
+                instances.append((task_id, module_id, agent_id))
+
+                # 记录每个 node 属于哪个模块
+                for node in nodes or []:
+                    node_map[(task_id, str(node))] = (task_id, module_id)
+
         return instances, node_map
+from collections import defaultdict
 
-    for task_id in range(1, count + 1):
-        path = os.path.join(folder, f"{prefix}{task_id}.json")
-        if not os.path.exists(path):
+def attach_nodes_to_placement(
+    placement: Dict[Tuple[int, int], Dict],
+    node_map: Dict[Tuple[int, str], Tuple[int, int]],
+) -> Dict[Tuple[int, int], Dict]:
+    """
+    给每个 (task_id, module_id) 的 placement 填充 "nodes" 字段。
+
+    node_map: {(task_id, node_id_str) -> (task_id, module_id)}
+    """
+    # 先根据 node_map 建一个反向表: (task_id, module_id) -> [nodes]
+    module_nodes: Dict[Tuple[int, int], List[str]] = defaultdict(list)
+    for (tid, node), (tid2, mid) in node_map.items():
+        if tid != tid2:
             continue
-        with open(path, "r") as f:
-            modules = json.load(f)
-        for module in modules:
-            module_id, agent_id, nodes = _normalize_module_entry(module)
-            if module_id is None or agent_id is None:
-                continue
-            instances.append((task_id, int(module_id), int(agent_id)))
+        module_nodes[(tid2, mid)].append(node)
 
-            # 建立 node -> module 的映射
-            for node in nodes:
-                node_map[(task_id, node)] = (task_id, int(module_id))
-    return instances, node_map
+    new_placement: Dict[Tuple[int, int], Dict] = {}
+    for key, info in placement.items():
+        tid, mid = key
+        info2 = dict(info)  # 浅拷贝，避免修改原 dict
+        # 如果原来没有 nodes，则从 module_nodes 补上；有的话就保留原来的
+        if "nodes" not in info2:
+            info2["nodes"] = module_nodes.get((tid, mid), [])
+        new_placement[key] = info2
+
+    return new_placement
 
 
 def find_module_of_node(node: str,
@@ -268,53 +302,6 @@ AL_PARAMS = {
 }
 
 
-def main():
-    cloud, device_list, edge_list, gw_matrix = load_infrastructure()
-
-    # 读取智能体模板
-    # 加载数据
-    csv_path = "redundant_agent_templates.csv"
-    df = pd.read_csv(csv_path)
-
-    task_graphs = []
-    task_num = 10  # 假设有 10 个任务图 dag1~dag10
-    tg = TaskGraph()
-    for dag in range(1, task_num + 1):
-        path = f"task/dag{dag}_typed_constraint.json"
-        with open(path, "r") as f:
-            data = json.load(f)
-            tg.load_from_json(data)
-            task_graphs.append(tg)
-
-    device_num = len(device_list)
-    edge_num = len(edge_list)
-
-    # 给 Edge 服务器分配连续 id
-    for idx, edge in enumerate(edge_list, start=device_num + 1):
-        edge.id = idx  # 例如 IoT 有 25 台，则第一台 Edge 从 26 开始
-
-    # Cloud 服务器 id
-    cloud.id = device_num + edge_num + 1  # 唯一编号
-
-    # 构建实例与模板
-    instances, node_map = build_agent_instances()
-    agent_lookup = build_agent_lookup(df)
-    all_devices = list(range(1, cloud.id + 1))
-
-    device_map = {d.id: d for d in device_list}
-    device_map.update({e.id: e for e in edge_list})
-    device_map[cloud.id] = cloud
-
-    # 2. 随机生成一个染色体（初始化个体）
-    chrom = encode_global_placement(instances, agent_lookup, all_devices)
-    # 3. 解码查看放置方案
-    placement_dict = decode_global_placement(chrom, instances, agent_lookup)
-
-    # 打印其中一个实例的放置详情
-    sample_key = instances[0][:2]  # (task_id,module_id)
-    print(sample_key, placement_dict[sample_key])
-
-
 # ---------------------- 归一化辅助函数 ----------------------
 N_RES_DIM = 4  # cpu_num, gpu_mem, ram, disk 四维
 
@@ -360,6 +347,8 @@ def evaluation_func(chromosome: list,
     total_makespan = 0.0
     total_energy = 0.0
     detail_map: Dict[int, Dict[str, float]] = {}
+
+    placement = attach_nodes_to_placement(placement, node_map)
 
     for idx, task_graph in enumerate(task_graphs, start=1):
         task_placement = {k: v for k, v in placement.items() if k[0] == idx}

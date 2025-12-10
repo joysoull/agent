@@ -570,7 +570,7 @@ def evaluation_func_rl(
             return mod_place["act_map"].get(idx)
         return None
 
-    # --- 1) 每个模块的执行时间（core phase） ---
+    # --- 1) 每个模块的执行时间（core 相位） ---
     exec_time_map: Dict[Tuple[int, Any], float] = {}  # (task_id, phase_node) -> time(s)
     for (tid, module_id), info in placement.items():
         agent = agent_lookup[info["agent_id"]]
@@ -578,11 +578,15 @@ def evaluation_func_rl(
         r_cpu, _, r_gpu, _, _, _ = agent.r
         cpu_cap = float(getattr(res, "cpu", 0.0))
         gpu_cap = float(getattr(res, "gpu", 0.0))
-        cpu_time = (r_cpu / cpu_cap) if cpu_cap > 0 else 0.0
+        cpu_time = (r_cpu / cpu_cap) if cpu_cap > 0 else float('inf')
         gpu_time = (r_gpu / gpu_cap) if gpu_cap > 0 else 0.0
         core_time = max(cpu_time, gpu_time)
 
-        n_pre, n_core, n_post = (module_id, "pre"), (module_id, "core"), (module_id, "post")
+        # 三相位节点键
+        n_pre = (module_id, "pre")
+        n_core = (module_id, "core")
+        n_post = (module_id, "post")
+
         exec_time_map[(task_id, n_pre)] = 0.0
         exec_time_map[(task_id, n_core)] = float(core_time)
         exec_time_map[(task_id, n_post)] = 0.0
@@ -590,23 +594,34 @@ def evaluation_func_rl(
     intra_pre_ms = defaultdict(float)  # 模块内 S→P
     intra_post_ms = defaultdict(float)  # 模块内 P→A
     for u, v, attr in task_graph.get_dependencies():
-        u_mod, v_mod = node_to_module_map.get(u), node_to_module_map.get(v)
-        if u_mod != v_mod or u_mod is None:
+        u_mod = node_to_module_map.get(u)
+        v_mod = node_to_module_map.get(v)
+        if u_mod is None or v_mod is None:
             continue
-        du, dv = get_device_for_node(u), get_device_for_node(v)
+        if u_mod != v_mod:
+            continue  # 这里只统计“模块内”边
+
+        du = get_device_for_node(u)
+        dv = get_device_for_node(v)
         if du is None or dv is None or du == dv:
-            continue
+            continue  # 同设备或未分配，不产生链路延迟
+
+        u_type = task_graph.G.nodes[u].get("type", "proc")
+        v_type = task_graph.G.nodes[v].get("type", "proc")
+
         delay_ms, _, _ = compute_transmission_delay(
-            src=device_map[du], dst=device_map[dv],
+            src=device_map[du],
+            dst=device_map[dv],
             data_size_mb=attr.get("data_size", 0.0),
             bw_req=attr.get("bandwidth_req", 0.0),
             gw_matrix=gw_matrix
         )
-        u_type, v_type = task_graph.G.nodes[u].get("type"), task_graph.G.nodes[v].get("type")
+
         if u_type == "sense" and v_type == "proc":
-            intra_pre_ms[u_mod] = max(intra_pre_ms[u_mod], delay_ms)
+            intra_pre_ms[u_mod] = max(intra_pre_ms[u_mod], float(delay_ms))
         elif u_type == "proc" and v_type == "act":
-            intra_post_ms[u_mod] = max(intra_post_ms[u_mod], delay_ms)
+            intra_post_ms[u_mod] = max(intra_post_ms[u_mod], float(delay_ms))
+        # 其它类型（proc→proc等）按需扩展
 
     # --- 3) 组装三相位图的边与延迟 ---
     agent_dag_edges: List[Tuple[Any, Any, Dict]] = []  # (phase_u, phase_v, {})
@@ -624,47 +639,37 @@ def evaluation_func_rl(
         edge_delay_map[(task_id, n_core, n_post)] = intra_post_ms[module_id] / 1000.0
     # 3b) 跨模块边：统一用 U(core) → V(core)，延迟取该边跨设备通信（ms -> s）
     # 若同一模块对之间多条边，取最大延迟（关键路径）
-    # --- 3b) 跨模块边（含阻塞延迟） ---
-    inter_core_delay_sec = defaultdict(float)
-    incoming_trans_delay = defaultdict(list)
+    inter_core_delay_sec = defaultdict(float)  # key: (U_core, V_core)
     for u, v, attr in task_graph.get_dependencies():
-        u_mod, v_mod = node_to_module_map.get(u), node_to_module_map.get(v)
+        u_mod = node_to_module_map.get(u)
+        v_mod = node_to_module_map.get(v)
         if u_mod is None or v_mod is None or u_mod == v_mod:
             continue
 
-        du, dv = get_device_for_node(u), get_device_for_node(v)
+        du = get_device_for_node(u)
+        dv = get_device_for_node(v)
         if du is None or dv is None:
             continue
 
-        d_ms, _, _ = compute_transmission_delay(
-            src=device_map[du], dst=device_map[dv],
-            data_size_mb=attr.get("data_size", 1.0),
-            bw_req=attr.get("bandwidth_req", 0.0),
-            gw_matrix=gw_matrix
-        )
-        delay_sec = float(d_ms) / 1000.0
+        if du == dv:
+            delay_sec = 0.0
+        else:
+            d_ms, _, _ = compute_transmission_delay(
+                src=device_map[du],
+                dst=device_map[dv],
+                data_size_mb=attr.get("data_size", 0.0),
+                bw_req=attr.get("bandwidth_req", 0.0),
+                gw_matrix=gw_matrix
+            )
+            delay_sec = float(d_ms) / 1000.0
 
-        # ✅ 模块阻塞延迟
-        src_exec = exec_time_map.get((task_id, (u_mod, "core")), 0.0)
-        # 若模块内存在多个proc节点，则认为阻塞完整执行时间
-        num_proc = len([n for n in task_graph.G.nodes()
-                        if node_to_module_map.get(n) == u_mod and
-                        task_graph.G.nodes[n].get("type") == "proc"])
-        block_wait = src_exec if num_proc > 1 else 0.0
-        total_delay = delay_sec + block_wait
-
-        u_core, v_core = (u_mod, "core"), (v_mod, "core")
-        inter_core_delay_sec[(u_core, v_core)] = max(inter_core_delay_sec[(u_core, v_core)], total_delay)
-        incoming_trans_delay[v_core].append(total_delay)
+        u_core = (u_mod, "core")
+        v_core = (v_mod, "core")
+        key = (u_core, v_core)
+        inter_core_delay_sec[key] = max(inter_core_delay_sec[key], delay_sec)
     for (u_core, v_core), dsec in inter_core_delay_sec.items():
         agent_dag_edges.append((u_core, v_core, {}))
         edge_delay_map[(task_id, u_core, v_core)] = dsec
-    # --- 3c) 模块同步启动等待（输入最大延迟） ---
-    sync_wait_map = {m: max(v) if v else 0.0 for m, v in incoming_trans_delay.items()}
-    for (tid, module_id), _ in placement.items():
-        n_core = (module_id, "core")
-        if n_core in sync_wait_map:
-            exec_time_map[(task_id, n_core)] += sync_wait_map[n_core]
     # --- 4) 计算 makespan ---
     makespan = compute_task_finish_time(
         task_id=task_id,
@@ -672,38 +677,57 @@ def evaluation_func_rl(
         exec_time_map=exec_time_map,
         edge_delay_map=edge_delay_map
     )
-    # --- 5) 能耗计算 ---
-    exec_energy_J, comm_energy_J = 0.0, 0.0
-    # (a) 执行能耗
+    # 4a) 计算能耗：按模块计算 CPU/GPU 能耗（J = W * s）
+    exec_energy_J = 0.0
     for (tid, module_id), info in placement.items():
         agent = agent_lookup[info["agent_id"]]
         dev = device_map[info["soft_device"]]
         r_cpu, _, r_gpu, _, _, _ = agent.r
         cpu_cap = float(getattr(dev.resource, "cpu", 0.0))
         gpu_cap = float(getattr(dev.resource, "gpu", 0.0))
-        cpu_pow = float(getattr(dev.resource, "cpu_power", 0.0))
-        gpu_pow = float(getattr(dev.resource, "gpu_power", 0.0))
-        cpu_time = (r_cpu / cpu_cap) if cpu_cap > 0 else 0.0
-        gpu_time = (r_gpu / gpu_cap) if gpu_cap > 0 else 0.0
+        cpu_pow = float(getattr(dev.resource, "cpu_power", 0.0))  # W
+        gpu_pow = float(getattr(dev.resource, "gpu_power", 0.0))  # W
+        cpu_time = (r_cpu / cpu_cap) / 3600.0 if cpu_cap > 0 else 0.0  # s（按你现有定义）
+        gpu_time = (r_gpu / gpu_cap) / 3600.0 if gpu_cap > 0 else 0.0
         exec_energy_J += cpu_time * cpu_pow + gpu_time * gpu_pow
-
-    # (b) 通信能耗
+    # 4b) 通信能耗：对任务图所有跨设备边累加（不取 max）
+    SENSE_DATA_MB_DEFAULT = 0.5
+    CTRL_DATA_MB_DEFAULT = 0.1
+    PROC_DATA_MB_DEFAULT = 1.0
+    LAT_REQ_DEFAULT = 50.0
+    BW_REQ_DEFAULT = 0.0
+    comm_energy_J = 0.0
+    G = task_graph.G
     for u, v, attr in task_graph.get_dependencies():
-        du, dv = get_device_for_node(u), get_device_for_node(v)
+        du = get_device_for_node(u)
+        dv = get_device_for_node(v)
         if du is None or dv is None or du == dv:
             continue
-        src, dst = device_map[du], device_map[dv]
-        _, _, ej = compute_transmission_delay(
-            src=src, dst=dst,
-            data_size_mb=attr.get("data_size", 1.0),
-            bw_req=attr.get("bandwidth_req", 0.0),
-            gw_matrix=gw_matrix
-        )
-        # 有线能耗权重降低
-        if getattr(src, "conn_type", "wired") == "wired" and getattr(dst, "conn_type", "wired") == "wired":
-            ej *= 0.1
-        comm_energy_J += ej
 
+        u_type = G.nodes[u].get("type", "proc")
+        v_type = G.nodes[v].get("type", "proc")
+        data_mb = attr.get("data_size")
+        bw_req = attr.get("bandwidth_req")
+        lat_req = attr.get("latency_req")
+
+        if data_mb is None:
+            if u_type == "sense" and v_type == "proc":
+                data_mb = SENSE_DATA_MB_DEFAULT
+            elif u_type == "proc" and v_type == "act":
+                data_mb = CTRL_DATA_MB_DEFAULT
+            else:
+                data_mb = PROC_DATA_MB_DEFAULT
+        if bw_req is None:
+            bw_req = BW_REQ_DEFAULT
+        if lat_req is None:
+            lat_req = 20.0 if (u_type == "sense" and v_type == "proc") or (
+                    u_type == "proc" and v_type == "act") else LAT_REQ_DEFAULT
+
+        _, _, ej = compute_transmission_delay(
+            src=device_map[du], dst=device_map[dv],
+            data_size_mb=data_mb, bw_req=bw_req, gw_matrix=gw_matrix
+        )
+        comm_energy_J += float(ej)
     energy_bd = {
         "exec": float(exec_energy_J),
         "comm": float(comm_energy_J),
@@ -711,618 +735,3 @@ def evaluation_func_rl(
     }
 
     return float(makespan), float(energy_bd["total"]), energy_bd
-
-
-def _calculate_module_fitness_collab(
-        nodes: set,
-        G: nx.DiGraph,
-        agent_lookup: Dict[int, AgentTemplate],
-        cut_penalty_coef: float = 0.02,
-) -> float:
-    """
-    计算“候选模块”的适应度（越小越好）。
-    - 软能力(C_soft)与执行器(C_act)缺失：不可协作 => 大惩罚（UNSOLVABLE_MISMATCH_PENALTY）
-    - 传感能力(C_sense)缺失：可跨模块协作 => 小惩罚（COLLABORATION_PENALTY_PER_CAP）
-    - cut 惩罚：轻微惩罚跨模块边，鼓励把强耦合子图放一起
-    - size 惩罚：模块越小越惩罚，促使模块更“饱满”
-    """
-    if not nodes:
-        return float('inf')
-
-    # 1) 聚合模块所需能力
-    C_sense, C_act, C_soft = get_module_capabilities(G, nodes)
-    if not (C_sense or C_act or C_soft):
-        # 没能力需求的“空壳”，避免被选中
-        return float('inf')
-
-    # 2) 在所有智能体模板里找“惩罚最小”的一个（乐观假设最佳匹配）
-    best_agent_penalty = float('inf')
-    for agent in agent_lookup.values():
-        miss_soft = len(C_soft - agent.C_soft)  # 不可协作
-        miss_act = len(C_act - agent.C_act)  # 不可协作
-        miss_sense_collab = len(C_sense - agent.C_sense)  # 可协作
-
-        penalty = (
-                (miss_soft + miss_act) * UNSOLVABLE_MISMATCH_PENALTY +
-                miss_sense_collab * COLLABORATION_PENALTY_PER_CAP
-        )
-        if penalty < best_agent_penalty:
-            best_agent_penalty = penalty
-
-    # 3) 轻量 cut 惩罚：模块外连接越多，惩罚越大（非常小的系数，避免喧宾夺主）
-    #   你也可以把它关掉：把 cut_penalty_coef 设为 0 即可
-    cut_edges = 0
-    for u in nodes:
-        # 出边到模块外
-        for v in G.successors(u):
-            if v not in nodes:
-                cut_edges += 1
-        # 入边来自模块外
-        for v in G.predecessors(u):
-            if v not in nodes:
-                cut_edges += 1
-    # 归一化到 [0,1] 范围的一个粗略指标
-    possible_edges = max(1, len(nodes) * max(1, len(G.nodes) - len(nodes)))
-    cut_penalty = cut_penalty_coef * (cut_edges / possible_edges)
-
-    # 4) 模块大小的反比惩罚（鼓励更饱满）
-    size_penalty = (1.0 / len(nodes)) * 0.1
-
-    return best_agent_penalty + cut_penalty + size_penalty
-
-
-def partition_with_greedy_algorithm(
-        task_graph: TaskGraph,
-        agent_lookup: Dict[int, AgentTemplate],
-        max_module_size: int = 8
-) -> List[set]:
-    """
-    使用“协作友好”的贪心增长算法对任务图进行划分。
-
-    差异点：
-      - 适应度函数改为 _calculate_module_fitness_collab（允许传感协作）
-      - 生长时只接受能显著降低适应度的邻居，否则停止
-    """
-    G = task_graph.G
-    unassigned = set(G.nodes())
-    final_modules: List[set] = []
-
-    while unassigned:
-        # 1) 选种子：优先 'proc'
-        proc_nodes = [n for n in unassigned if G.nodes[n].get("type") == "proc"]
-        if proc_nodes:
-            seed = random.choice(proc_nodes)
-        else:
-            # 无 proc 时随便挑一个
-            seed = next(iter(unassigned))
-
-        current = {seed}
-        unassigned.remove(seed)
-
-        # 2) 贪心生长
-        while len(current) < max_module_size:
-            # 候选 = 当前模块所有邻居 ∩ 未分配
-            neighbors = set()
-            for n in current:
-                neighbors.update(G.successors(n))
-                neighbors.update(G.predecessors(n))
-            candidates = neighbors & unassigned
-            if not candidates:
-                break
-
-            # 当前适应度
-            base_fit = _calculate_module_fitness_collab(current, G, agent_lookup)
-            best_fit = base_fit
-            best_cand = None
-
-            for c in candidates:
-                tmp = current | {c}
-                fit = _calculate_module_fitness_collab(tmp, G, agent_lookup)
-                if fit < best_fit:
-                    best_fit = fit
-                    best_cand = c
-
-            # 若没有候选能改进，停止生长
-            if best_cand is None:
-                break
-
-            # 接纳最优候选
-            current.add(best_cand)
-            unassigned.remove(best_cand)
-
-        final_modules.append(current)
-
-    return final_modules
-
-
-def match_agent_for_module(
-        G: nx.DiGraph,
-        nodes: set,
-        agent_lookup: Dict[int, AgentTemplate],
-        strict: bool = True
-) -> Tuple[int, Dict[str, Any]]:
-    C_sense, C_act, C_soft = get_module_capabilities(G, nodes)
-    best_agent_id = None
-    best_score = float("inf")
-    best_info = {"perfect": False, "miss_soft": 0, "miss_act": 0, "miss_sense": 0}
-
-    BIG = 1e6
-    for aid, agent in agent_lookup.items():
-        miss_soft = len(C_soft - agent.C_soft)
-        miss_act = len(C_act - agent.C_act)
-        miss_sense = len(C_sense - agent.C_sense)
-        if strict and (miss_soft == 0 and miss_act == 0 and miss_sense == 0):
-            return aid, {"perfect": True, "miss_soft": 0, "miss_act": 0, "miss_sense": 0}
-        score = miss_soft * BIG + miss_act * BIG + miss_sense
-        if score < best_score:
-            best_score = score
-            best_agent_id = aid
-            best_info = {"perfect": (miss_soft == 0 and miss_act == 0 and miss_sense == 0),
-                         "miss_soft": miss_soft, "miss_act": miss_act, "miss_sense": miss_sense}
-    return best_agent_id, best_info
-
-
-
-def train_tripart_csac(total_steps=200_000, seed=42, K_s_max=6, K_a_max=6,
-                       precomputed_plans_path: Optional[str] = "plans.json"):
-    env = create_tripart_env(
-        seed=seed, K_s_max=K_s_max, K_a_max=K_a_max,
-        max_module_size=5, min_module_size=1,
-        lns_rounds=300, grasp_runs=40, grasp_rcl_k=3,
-        precomputed_plans_path=precomputed_plans_path
-    )
-    base_env = env.envs[0]  # Monitor 包了一层
-    obs, _ = base_env.reset(seed=seed)
-    # 通过动作空间获取每头可选设备数（Monitor 包装后同样可用）
-    nvec = base_env.action_space.nvec
-    num_devices = int(nvec[1])  # 第 1 维才是计算设备头
-
-    cfg = CSACConfig(
-        buffer_size=200_000,
-        batch_size=256,
-        gamma=0.99, tau=0.005, lr=3e-4,
-        alpha_init=0.2, target_entropy_per_head=-np.log(max(1, num_devices)),
-        lambda_lr=5e-3,
-        constraint_keys=["latency", "bandwidth", "resource_violation", "illegal_caps", "cap_violation"],
-        cost_limits={"latency": 5e-2, "bandwidth": 5e-2, "resource_violation": 0, "illegal_caps": 0,
-                     "cap_violation": 0}, warmup_steps=10_000, updates_per_step=1,
-        device="cuda" if torch.cuda.is_available() else "cpu",
-    )
-    algo = ConstrainedDiscreteSAC(base_env, cfg)
-
-    rng = np.random.default_rng(seed)
-    ep_ret, ep_len = 0.0, 0
-    episode_idx = 1
-    # === NEW: 日志器 ===
-    run_logger = TrainRunLogger(log_dir=LOG_DIR, run_name="cSAC")
-    try:
-        for t in range(1, total_steps + 1):
-            # 动作
-            obs_t = _to_torch_obs(obs, algo.device)
-            action, _ = algo.policy.act(obs_t, deterministic=False)
-
-            next_obs, reward, done, trunc, info = base_env.step(action[0])  # action shape (1,H) -> 取[0]
-            costs = info.get("costs", {})
-            # === NEW: 逐步日志（含 step 与 episode）===
-            run_logger.log_step(step=t, episode=episode_idx, reward=float(reward), costs=costs, info=info)
-
-            costs = info.get("costs", {})  # env 已在 step 中放进去
-            # 在训练 loop 里：
-            # if costs.get("illegal_caps", 0) > 0:
-            # # print("[DEBUG][illegal]", costs.get("illegal_detail"))
-            for rec in info.get("violation_log", []):
-                if rec and float(rec.get("penalty", 0)) > 0:
-                    print(
-                        f"[step={rec.get('step')}] task={rec.get('task_id')} type={rec.get('type')} penalty={rec.get('penalty')}")
-
-            algo.replay.add(obs, action[0], float(reward), next_obs, bool(done or trunc), costs)
-
-            obs = next_obs
-            ep_ret += float(reward)
-            ep_len += 1
-
-            if done or trunc:
-                # 终局信息
-                print(f"[cSAC] Ep {episode_idx} done: ret={ep_ret:.2f}, len={ep_len}, status={info.get('status')}, "
-                      f"obj={0.5 * info.get('makespan', -1) + 0.5 * info.get('energy', -1):.2f},mk={info.get('makespan', -1):.2f}, en={info.get('energy', -1):.2f}, pen={info.get('penalty', -1):.2f}")
-                # === NEW: 回合日志 ===
-                run_logger.log_episode(
-                    episode=episode_idx,
-                    ep_return=ep_ret,
-                    ep_len=ep_len,
-                    final_info=info
-                )
-                episode_idx += 1
-                obs, _ = base_env.reset(seed=int(rng.integers(0, 10_000)))
-                ep_ret, ep_len = 0.0, 0
-
-            # 更新
-            if len(algo.replay) > cfg.warmup_steps:
-                for _ in range(cfg.updates_per_step):
-                    batch = algo.replay.sample(cfg.batch_size)
-                    log_info = algo.update(batch)
-                    if t % 2000 == 0:
-                        print(f"[cSAC] t={t} | "
-                              f"Q={log_info['critic_loss']:.3f} | Pi={log_info['policy_loss']:.3f} | "
-                              f"alpha={log_info['alpha']:.3f} | "
-                              f"λ_lat={log_info.get('lambda_latency', 0):.3f}({log_info.get('avg_latency', 0):.3f}) | "
-                              f"λ_bw={log_info.get('lambda_bandwidth', 0):.3f}({log_info.get('avg_bandwidth', 0):.3f})")
-    finally:
-        # === NEW: 训练结束确保落盘 ===
-        run_logger.close()
-        paths = run_logger.paths
-        print(f"[cSAC] Training logs saved:\n  - steps:    {paths['steps']}\n  - episodes: {paths['episodes']}")
-    return algo
-
-
-def evaluate_tripart_csac(algo,
-                          episodes: int = 10,
-                          seed: int = 123,
-                          deterministic: bool = True):
-    """
-    使用 cSAC 的策略进行纯评估（不学习）。
-    - algo: ConstrainedDiscreteSAC 实例（内含 env 与 policy）
-    - episodes: 评估回合数
-    - deterministic: 是否用贪心动作（True=argmax）
-    """
-    # 兼容 DummyVecEnv(Monitor(...)) 或原生 env
-    env = getattr(algo, "env", None)
-    if env is None:
-        raise ValueError("algo.env is None. Please pass the cSAC algo created by train_tripart_csac.")
-    base_env = env.envs[0] if hasattr(env, "envs") else env
-
-    rng = np.random.default_rng(seed)
-
-    ep_summaries = []
-    cost_keys = ["latency", "bandwidth", "comm_energy", "exec_energy"]
-
-    for ep in range(episodes):
-        obs, _ = base_env.reset(seed=int(seed + ep))
-        done, trunc = False, False
-        ep_ret, ep_len = 0.0, 0
-
-        # 累计约束成本（按回合求均值）
-        cost_acc = {k: 0.0 for k in cost_keys}
-        cost_cnt = 0
-
-        final_info = {}
-
-        while not (done or trunc):
-            # 用 cSAC 策略出动作
-            a, _ = algo.policy.act(_to_torch_obs(obs, algo.device), deterministic=deterministic)
-            # act 返回 (1,H)，需要取第 0 个样本
-            obs, r, done, trunc, info = base_env.step(a[0])
-
-            ep_ret += float(r)
-            ep_len += 1
-            final_info = info
-
-            # 记录 step 的 costs
-            step_costs = info.get("costs", {})
-            for k in cost_keys:
-                cost_acc[k] += float(step_costs.get(k, 0.0))
-            cost_cnt += 1
-
-        # 回合级统计
-        avg_costs = {k: (cost_acc[k] / max(1, cost_cnt)) for k in cost_keys}
-        summary = {
-            "episode": ep + 1,
-            "reward": ep_ret,
-            "length": ep_len,
-            "status": final_info.get("status", "unknown"),
-            "makespan": float(final_info.get("makespan", -1.0)),
-            "energy": float(final_info.get("energy", -1.0)),
-            "penalty": float(final_info.get("penalty", -1.0)),
-            **{f"avg_{k}": v for k, v in avg_costs.items()}
-        }
-        ep_summaries.append(summary)
-
-        print(
-            f"[cSAC Eval] Ep {ep + 1:02d} | "
-            f"Ret={summary['reward']:.2f} Len={summary['length']:3d} | "
-            f"Status={summary['status']} | "
-            f"mk={summary['makespan']:.2f} en={summary['energy']:.2f} pen={summary['penalty']:.2f} | "
-            f"lat={summary['avg_latency']:.3f} bw={summary['avg_bandwidth']:.3f} "
-            f"ce={summary['avg_comm_energy']:.3f} ee={summary['avg_exec_energy']:.3f}"
-        )
-
-    # 整体汇总
-    import numpy as _np
-
-    def _safe_avg(arr):
-        return float(_np.mean(arr)) if len(arr) > 0 else float("nan")
-
-    rets = [x["reward"] for x in ep_summaries]
-    lens = [x["length"] for x in ep_summaries]
-    succ = [x for x in ep_summaries if x["status"] == "success"]
-    succ_rate = len(succ) / max(1, episodes)
-
-    agg = {
-        "episodes": episodes,
-        "avg_reward": _safe_avg(rets),
-        "avg_length": _safe_avg(lens),
-        "success_rate": succ_rate,
-        "success_avg_makespan": _safe_avg([x["makespan"] for x in succ]),
-        "success_avg_energy": _safe_avg([x["energy"] for x in succ]),
-        "success_avg_penalty": _safe_avg([x["penalty"] for x in succ]),
-        "all_avg_latency": _safe_avg([x["avg_latency"] for x in ep_summaries]),
-        "all_avg_bandwidth": _safe_avg([x["avg_bandwidth"] for x in ep_summaries]),
-        "all_avg_comm_energy": _safe_avg([x["avg_comm_energy"] for x in ep_summaries]),
-        "all_avg_exec_energy": _safe_avg([x["avg_exec_energy"] for x in ep_summaries]),
-    }
-
-    print("\n[cSAC Eval] ===== Summary =====")
-    print(
-        f"Episodes={agg['episodes']} | "
-        f"AvgRet={agg['avg_reward']:.2f} | AvgLen={agg['avg_length']:.1f} | "
-        f"SuccRate={agg['success_rate'] * 100:.1f}%"
-    )
-    print(
-        f"Success Only -> "
-        f"AvgMakespan={agg['success_avg_makespan']:.3f} | "
-        f"AvgEnergy={agg['success_avg_energy']:.3f} | "
-        f"AvgPenalty={agg['success_avg_penalty']:.3f}"
-    )
-    print(
-        f"All Episodes Avg Costs -> "
-        f"Latency={agg['all_avg_latency']:.3f} | "
-        f"Bandwidth={agg['all_avg_bandwidth']:.3f} | "
-        f"CommE={agg['all_avg_comm_energy']:.3f} | "
-        f"ExecE={agg['all_avg_exec_energy']:.3f}"
-    )
-    return {"episodes": ep_summaries, "summary": agg}
-
-
-# <<< NEW: Custom Callback for logging training data >>>
-class TrainingLoggerCallback(BaseCallback):
-    def __init__(self, log_path: str, level_name: str, verbose: int = 0):
-        super().__init__(verbose)
-        self.log_path = log_path
-        self.level_name = level_name
-        self.episode_data = []
-        self.start_time = time.time()
-
-    def _on_step(self) -> bool:
-        # 检查是否有环境完成了 Episode
-        # 我们从日志中已经确认，这个条件是会满足的
-        if self.locals["dones"][0]:
-            info = self.locals["infos"][0]
-
-            # <<< 核心修复：直接从 info 字典顶层获取数据 >>>
-            # 我们不再查找 'episode' 或 'final_info'，因为日志显示它们不存在。
-
-            # 尝试获取 SB3 的 'episode' 键，如果不存在则使用默认值
-            # 注意：在你的日志中，这个键不存在，所以会使用默认值
-            ep_info = info.get("episode")
-            ep_reward = ep_info["r"] if ep_info else -999.0  # 使用一个明显的值表示数据缺失
-            ep_length = ep_info["l"] if ep_info else -1
-
-            # 直接从 info 字典获取我们的自定义性能指标
-            makespan = info.get("makespan", -1.0)
-            energy = info.get("energy", -1.0)
-            # 注意：penalty 是 np.float64 类型，需要转换为 float 以便格式化
-            penalty = float(info.get("penalty", -1.0))
-            status = info.get("status", "unknown")
-
-            # 记录数据
-            self.episode_data.append({
-                "timesteps": self.num_timesteps,
-                "episode_reward": ep_reward,
-                "episode_length": ep_length,
-                "makespan": makespan,
-                "energy": energy,
-                "penalty": penalty,
-                "status": status
-            })
-
-            # 计算并打印日志
-            now = time.time()
-            duration = now - self.start_time
-            sps = self.num_timesteps / duration if duration > 0 else 0
-
-            log_str = (
-                f"[{self.level_name}] "
-                f"TS: {self.num_timesteps:<8} | "
-                f"Ep: {len(self.episode_data):<5} | "
-                f"Reward: {ep_reward:<8.2f} | "  # Reward 会显示 -999.00
-                f"Len: {ep_length:<4} | "
-                f"Status: {status:<22} | "
-                f"Makespan: {makespan:<7.2f} | "
-                f"Energy: {energy:<8.2f} | "
-                f"Penalty: {penalty:<6.2f} | "
-                f"SPS: {int(sps):<5}"
-            )
-            print(log_str)
-
-        return True
-
-    def _on_training_end(self) -> None:
-        if self.episode_data:
-            df = pd.DataFrame(self.episode_data)
-            df.to_csv(self.log_path, index=False)
-            if self.verbose > 0:
-                print(f"[{self.level_name}] Training log with {len(df)} episodes saved to {self.log_path}")
-
-
-# === NEW: Simple run logger for manual cSAC training ===
-import os, csv
-from datetime import datetime
-
-
-class TrainRunLogger:
-    """
-    记录两类日志：
-    - steps.csv：每个环境步的信息（step, episode, reward, costs...）
-    - episodes.csv：每个回合的聚合指标（episode, ret, len, makespan, energy, penalty, status...）
-    """
-
-    def __init__(self, log_dir: str = "logs", run_name: str | None = None):
-        os.makedirs(log_dir, exist_ok=True)
-        stamp = run_name or datetime.now().strftime("%Y%m%d-%H%M%S")
-        self.step_path = os.path.join(log_dir, f"steps_{stamp}.csv")
-        self.ep_path = os.path.join(log_dir, f"episodes_{stamp}.csv")
-
-        # 写入 CSV 头
-        self._step_writer = None
-        self._ep_writer = None
-        self._step_f = open(self.step_path, "w", newline="", encoding="utf-8")
-        self._ep_f = open(self.ep_path, "w", newline="", encoding="utf-8")
-
-    def log_step(self, *, step: int, episode: int, reward: float, costs: dict, info: dict):
-        # 统一一些常见键，缺失则给默认值
-        row = {
-            "step": step,
-            "episode": episode,
-            "reward": float(reward),
-            "latency": float(costs.get("latency", 0.0)),
-            "bandwidth": float(costs.get("bandwidth", 0.0)),
-            "comm_energy": float(costs.get("comm_energy", 0.0)),
-            "exec_energy": float(costs.get("exec_energy", 0.0)),
-            "illegal_caps": float(costs.get("illegal_caps", 0.0)),
-            "cap_violation": float(costs.get("cap_violation", 0.0)),
-            "resource_violation": float(costs.get("resource_violation", 0.0)),
-            "rejected": bool(info.get("rejected", False)),
-        }
-        # 懒初始化 writer（根据首次行的列名创建）
-        if self._step_writer is None:
-            self._step_writer = csv.DictWriter(self._step_f, fieldnames=list(row.keys()))
-            self._step_writer.writeheader()
-        self._step_writer.writerow(row)
-
-    def log_episode(self, *, episode: int, ep_return: float, ep_len: int, final_info: dict):
-        row = {
-            "episode": episode,
-            "episode_return": float(ep_return),
-            "episode_length": int(ep_len),
-            "status": str(final_info.get("status", "unknown")),
-            "makespan": float(final_info.get("makespan", -1.0)),
-            "energy": float(final_info.get("energy", -1.0)),
-            "penalty": float(final_info.get("penalty", -1.0)),
-            "max_latency_cost": float(final_info.get("max_latency_cost", 0.0)),
-            "max_bandwidth_cost": float(final_info.get("max_bandwidth_cost", 0.0)),
-            "feasible": bool(final_info.get("feasible", False)),
-        }
-        if self._ep_writer is None:
-            self._ep_writer = csv.DictWriter(self._ep_f, fieldnames=list(row.keys()))
-            self._ep_writer.writeheader()
-        self._ep_writer.writerow(row)
-
-    def close(self):
-        try:
-            self._step_f.flush();
-            self._ep_f.flush()
-        finally:
-            self._step_f.close();
-            self._ep_f.close()
-
-    @property
-    def paths(self):
-        return {"steps": self.step_path, "episodes": self.ep_path}
-
-
-# <<< NEW: 函数用于生成详细的部署方案报告 >>>
-def generate_deployment_report(
-        placement: Dict[Tuple[int, int], Dict],
-        task_graph: TaskGraph,
-        agent_lookup: Dict[int, AgentTemplate],
-        device_map: Dict[int, Device],
-        final_info: Dict
-) -> Dict:
-    """
-    将最终的部署方案（placement）转换成一个详细、易读的字典/JSON报告。
-
-    Args:
-        placement: 最终的部署方案字典。
-        task_graph: 对应的任务图。
-        agent_lookup: 智能体模板查找表。
-        device_map: 设备实例查找表。
-        final_info: 包含最终性能指标的字典。
-
-    Returns:
-        一个包含完整部署细节的字典。
-    """
-    task_id = task_graph.task_id if hasattr(task_graph, 'task_id') else list(placement.keys())[0][0]
-
-    report = {
-        "task_id": task_id,
-        "overall_performance": final_info,
-        "deployment_plan": []
-    }
-
-    # --- 预处理：建立一个快速查找表，用于查找哪个智能体提供哪个传感器能力 ---
-    sensor_provider_map = {}
-    for (tid, mod_id), mod_info in placement.items():
-        agent = agent_lookup[mod_info["agent_id"]]
-        for sensor_cap in agent.C_sense:
-            sensor_provider_map[sensor_cap] = {
-                "agent_id": agent.id,
-                "module_id": mod_id
-            }
-
-    # --- 遍历每个模块，生成其详细报告 ---
-    sorted_modules = sorted(placement.items(), key=lambda item: item[0][1])  # 按 module_id 排序
-
-    for (tid, module_id), info in sorted_modules:
-        agent = agent_lookup[info["agent_id"]]
-
-        # 1. 获取模块所需的能力
-        required_sense, _, _ = get_module_capabilities(task_graph.G, info["nodes"])
-
-        # 2. 识别缺失和需要协作的传感器
-        missing_sensors = required_sense - agent.C_sense
-        collaboration_details = []
-        for missing_cap in missing_sensors:
-            if missing_cap in sensor_provider_map:
-                provider = sensor_provider_map[missing_cap]
-                collaboration_details.append({
-                    "capability_id": missing_cap,
-                    "status": "Collaborative",
-                    "provided_by_agent_id": provider["agent_id"],
-                    "in_module_id": provider["module_id"]
-                })
-            else:
-                collaboration_details.append({
-                    "capability_id": missing_cap,
-                    "status": "Missing (Unsolved)",
-                    "provided_by_agent_id": None,
-                    "in_module_id": None
-                })
-
-        # 3. 整理设备部署信息
-        soft_dev_id = info["soft_device"]
-        device_deployments = {
-            "software_deployment": {
-                "device_id": soft_dev_id,
-                "device_type": device_map[soft_dev_id].type
-            },
-            "sensor_deployments": [
-                {
-                    "capability_id": cap_id,
-                    "device_id": dev_id,
-                    "device_type": device_map[dev_id].type
-                } for cap_id, dev_id in info["sense_map"].items()
-            ],
-            "actuator_deployments": [
-                {
-                    "capability_id": cap_id,
-                    "device_id": dev_id,
-                    "device_type": device_map[dev_id].type
-                } for cap_id, dev_id in info["act_map"].items()
-            ]
-        }
-
-        # 4. 组装该模块的报告
-        module_report = {
-            "module_id": module_id,
-            "nodes": sorted(list(info["nodes"])),  # 排序以保证输出一致性
-            "assigned_agent_template_id": agent.id,
-            "deployment_devices": device_deployments,
-            "collaboration_details": {
-                "required_sensors": sorted(list(required_sense)),
-                "provided_by_this_agent": sorted(list(agent.C_sense)),
-                "collaborative_sensors_needed": collaboration_details
-            }
-        }
-        report["deployment_plan"].append(module_report)
-
-    return report
