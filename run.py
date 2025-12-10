@@ -1,7 +1,7 @@
 import json
 import os
 import random
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Set
 import numpy as np
 import pandas as pd
 from simulation import Device, Resource
@@ -15,7 +15,7 @@ def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_ma
     with open(config_path, "r") as f:
         data = json.load(f)
 
-    # 解析云服务器
+    # ========== 解析云服务器 ==========
     cloud_data = data["cloud_server"]
     cloud = Device(
         type=cloud_data["type"],
@@ -27,9 +27,14 @@ def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_ma
         soft_cap=set(cloud_data["soft_cap"]),
         bandwidth=cloud_data["bandwidth"],
         delay=cloud_data["delay"],
+        # 工厂层级信息（云在单独层级）
+        level=cloud_data.get("level", "cloud"),
+        factory_id=cloud_data.get("factory_id"),
+        workshop_id=cloud_data.get("workshop_id"),
+        line_id=cloud_data.get("line_id"),
     )
 
-    # 解析 IoT 设备列表
+    # ========== 解析 IoT 设备列表 ==========
     device_list = []
     for dev in data["device_list"]:
         device_list.append(Device(
@@ -42,9 +47,14 @@ def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_ma
             soft_cap=set(dev["soft_cap"]),
             bandwidth=dev["bandwidth"],
             delay=dev["delay"],
+            # 工厂层级信息（生产线级设备）
+            level=dev.get("level", "line"),
+            factory_id=dev.get("factory_id"),
+            workshop_id=dev.get("workshop_id"),
+            line_id=dev.get("line_id"),
         ))
 
-    # 解析边缘服务器列表
+    # ========== 解析边缘服务器列表 ==========
     edge_list = []
     for edge in data["edge_server_list"]:
         edge_list.append(Device(
@@ -57,12 +67,30 @@ def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_ma
             soft_cap=set(edge["soft_cap"]),
             bandwidth=edge["bandwidth"],
             delay=edge["delay"],
+            # 工厂层级信息（车间级 / 工厂级边缘）
+            level=edge.get("level", "workshop"),
+            factory_id=edge.get("factory_id"),
+            workshop_id=edge.get("workshop_id"),
+            line_id=edge.get("line_id"),
         ))
+
+    # ========== 解析任务部署域和工厂拓扑元数据 ==========
+    # task_deploy_domains: {task_id: [allowed_levels...]}
+    raw_domains = data.get("task_deploy_domains", [])
+    task_deploy_domains = {
+        int(item["task_id"]): item.get("allowed_levels", [])
+        for item in raw_domains
+        if "task_id" in item
+    }
+
+    factory_meta = data.get("factory_meta", {})
 
     # 读取网关矩阵
     gw_matrix = np.load(gw_path)
 
-    return cloud, device_list, edge_list, gw_matrix
+    # 返回时把任务部署域和工厂信息一起带出去
+    return cloud, device_list, edge_list, gw_matrix, task_deploy_domains, factory_meta
+
 
 
 class TaskGraph:
@@ -338,6 +366,7 @@ h_e, h_c = 3, 5
 E_edge, E_core = 37e-9, 12.6e-9  # J/bit
 E_cent = 20e-6  # J/bit
 E_per_bit_wired = h_e * E_edge + h_c * E_core + E_cent  # ≈2.075e‑5 J/bit
+DOMAIN_PENALTY_COEF = 1e5  # 每个违反模块加 1e5 的罚分，数值你可以后续调
 
 # <<< NEW: 辅助函数，正确计算传输时间 >>>
 def _get_transmission_time_s(data_size_mb: float, rate_mbps: float) -> float:
@@ -347,18 +376,27 @@ def _get_transmission_time_s(data_size_mb: float, rate_mbps: float) -> float:
     return (data_size_mb * 8) / rate_mbps
 
 
+
 class ABGSK:
+
     def __init__(self, pop_size=None, max_g=None, p=0.05):
         self.pop_size = pop_size
         self.max_g = max_g
         self.p = p
 
         # ------------- 基础环境加载 -------------
-        cloud, device_list, edge_list, gw_matrix = load_infrastructure()
+        cloud, device_list, edge_list, gw_matrix, task_deploy_domains, factory_meta = load_infrastructure()
         self.cloud = cloud
         self.device_list = device_list
         self.edge_list = edge_list
         self.gw_matrix = gw_matrix
+
+        # 部署域: task_id -> 允许的层级集合（如 {"line","workshop"}）
+        from typing import Set, Dict  # 文件顶部已经有 Dict 的话，补一个 Set 即可
+        self.task_deploy_domains: Dict[int, Set[str]] = {
+            int(tid): set(levels) for tid, levels in task_deploy_domains.items()
+        }
+        self.factory_meta = factory_meta
 
         # 读取智能体模板
         df = pd.read_csv("redundant_agent_templates.csv")
@@ -407,22 +445,28 @@ class ABGSK:
         # ---- 构建基因边界（low/high）----
         low_list = []
         high_list = []
-        for _, _, aid in self.instances:  # 顺序必须和 encode_global_placement 一致
+        gene_meta = []  # 每个位对应: (kind, task_id, cap_id_or_None)
+
+        device_num = len(self.device_list)
+        for task_id, module_id, aid in self.instances:  # 注意保留 task_id
             tpl = self.agent_lookup[aid]
 
-            # 1) soft：1～cloud.id
+            # 1) soft：1～cloud.id，不受部署域限制
             low_list.append(1)
             high_list.append(self.cloud.id)
+            gene_meta.append(("soft", task_id, None))
 
             # 2) sense：1～device_num（只 IoT）
-            for _ in tpl.C_sense:
+            for cap in tpl.C_sense:
                 low_list.append(1)
-                high_list.append(len(self.device_list))
+                high_list.append(device_num)
+                gene_meta.append(("sense", task_id, cap))
 
             # 3) act：1～device_num（只 IoT）
-            for _ in tpl.C_act:
+            for cap in tpl.C_act:
                 low_list.append(1)
-                high_list.append(len(self.device_list))
+                high_list.append(device_num)
+                gene_meta.append(("act", task_id, cap))
 
         self.low = np.array(low_list, dtype=int)
         self.high = np.array(high_list, dtype=int)
@@ -431,18 +475,25 @@ class ABGSK:
 
         self.alpha = 0.5
         self.beta = 0.5
+        self.gene_meta = gene_meta
+        self.device_num = device_num
 
         # ---- 贪心 seed 染色体 ----
         devices = device_list + edge_list + [cloud]
         self.seed_chrom = encode_global_placement_greedy(
-            self.instances, self.agent_lookup, devices, self.device_map, verbose=False
+            self.instances,
+            self.agent_lookup,
+            devices,
+            self.device_map,
+            task_deploy_domains=self.task_deploy_domains,
+            verbose=False
         )
 
         # 打印一些调试信息
         print(f"Device boundaries - IoT: 1-{device_num}, Edge: {device_num + 1}-{device_num + edge_num}, Cloud: {cloud.id}")
         print(f"problem_size={self.problem_size}, low[:10]={self.low[:10]}, high[:10]={self.high[:10]}")
 
-        mp, energy, penalty, res_sum, cap_sum, bw_sum, lat_sum = evaluation_func(
+        mp, energy, penalty_base, res_sum, cap_sum, bw_sum, lat_sum = evaluation_func(
             self.seed_chrom,
             self.instances,
             self.agent_lookup,
@@ -454,10 +505,56 @@ class ABGSK:
             beta=self.beta,
             exec_time_cache=self.exec_time_cache,
         )
+        # 加部署域约束 penalty
+        seed_viol = self.check_task_domain_violations(np.array(self.seed_chrom, dtype=np.int32))
+        penalty_domain = DOMAIN_PENALTY_COEF * seed_viol
+        penalty = penalty_base + penalty_domain
+
         fval = self.alpha * mp + self.beta * energy + penalty
         print(f"[SEED] fitness {fval:.3f} | makespan {mp:.3f} | energy {energy:.3f} | "
-              f"penalty {penalty:.3f} | res {res_sum:.3f} | cap {cap_sum:.3f} | "
-              f"bw {bw_sum:.3f} | lat {lat_sum:.3f}")
+              f"penalty {penalty:.3f} (base={penalty_base:.3f}, domain={penalty_domain:.3f}) | "
+              f"res {res_sum:.3f} | cap {cap_sum:.3f} | bw {bw_sum:.3f} | lat {lat_sum:.3f}")
+
+    def _sample_feasible_device_for_cap(self, kind: str, task_id: int, cap_id: int) -> int:
+        """
+        为某个 (kind, task_id, cap_id) 选择一个“尽量满足部署域”的 IoT 设备。
+        kind: "sense" 或 "act"
+        返回: 设备 id (1..device_num)，如果无合适则退化为任意 IoT。
+        """
+        assert kind in ("sense", "act")
+        allowed_levels = self.task_deploy_domains.get(task_id)
+
+        # 先按: IoT + 对应能力 + level ∈ allowed_levels
+        cand = []
+        for d in self.device_list:  # IoT 设备
+            if kind == "sense":
+                if cap_id not in d.sense_cap:
+                    continue
+            else:  # "act"
+                if cap_id not in d.act_cap:
+                    continue
+            if allowed_levels is not None:
+                lvl = getattr(d, "level", None)
+                if lvl not in allowed_levels:
+                    continue
+            cand.append(d.id)
+
+        # 如果严格层级下找不到，就放宽层级约束，只要 IoT + 能力
+        if not cand:
+            for d in self.device_list:
+                if kind == "sense":
+                    if cap_id in d.sense_cap:
+                        cand.append(d.id)
+                else:
+                    if cap_id in d.act_cap:
+                        cand.append(d.id)
+
+        # 如果连具备该能力的 IoT 都没有，退化为任意 IoT
+        if not cand:
+            return random.randint(1, self.device_num)
+
+        return random.choice(cand)
+
 
     # ---------- 批量评估 ----------
     def evaluation_func(self, pop: np.ndarray):
@@ -480,7 +577,7 @@ class ABGSK:
 
         for i in range(N):
             chrom = pop[i]
-            mp, energy, penalty, res_val, cap_val, bw_val, lat_val = evaluation_func(
+            mp, energy, penalty_base, res_val, cap_val, bw_val, lat_val = evaluation_func(
                 chrom,
                 self.instances,
                 self.agent_lookup,
@@ -492,14 +589,24 @@ class ABGSK:
                 beta=self.beta,
                 exec_time_cache=self.exec_time_cache,
             )
+
+            # 1) 基础指标
             makespan[i] = mp
             total_energy[i] = energy
-            L_penalty[i] = penalty
             h_res_sum[i] = res_val
             h_cap_sum[i] = cap_val
             h_bw_sum[i] = bw_val
             h_lat_sum[i] = lat_val
-            fval[i] = self.alpha * mp + self.beta * energy + penalty
+
+            # 2) 任务部署域约束检查
+            viol_cnt = self.check_task_domain_violations(chrom)
+            penalty_domain = DOMAIN_PENALTY_COEF * viol_cnt
+
+            # 3) 总 penalty = 原本 penalty + 部署域 penalty
+            penalty_total = penalty_base + penalty_domain
+            L_penalty[i] = penalty_total
+
+            fval[i] = self.alpha * mp + self.beta * energy + penalty_total
 
         return fval, makespan, total_energy, L_penalty, h_res_sum, h_cap_sum, h_bw_sum, h_lat_sum
 
@@ -522,6 +629,43 @@ class ABGSK:
                     )
         return violations
 
+    def check_task_domain_violations(self, chromosome: np.ndarray) -> int:
+        """
+        检查当前染色体的传感 / 驱动设备是否违反任务部署域约束。
+        返回: 违反次数（按 (task, module, cap_type) 计数）
+        """
+        placement = decode_global_placement(chromosome, self.instances, self.agent_lookup)
+        violation_count = 0
+
+        for (task_id, module_id), info in placement.items():
+            allowed_levels = self.task_deploy_domains.get(task_id)
+            if not allowed_levels:
+                # 该任务未配置部署域，则不做额外限制
+                continue
+
+            # 1) sense 能力约束
+            for cap, dev_id in info["sense_map"].items():
+                dev = self.device_map.get(dev_id)
+                if dev is None:
+                    violation_count += 1
+                    continue
+                dev_level = getattr(dev, "level", None)
+                if dev_level not in allowed_levels:
+                    # 例如任务只允许 ["line"]，但设备在 "workshop"/"factory"
+                    violation_count += 1
+
+            # 2) act 能力约束
+            for cap, dev_id in info["act_map"].items():
+                dev = self.device_map.get(dev_id)
+                if dev is None:
+                    violation_count += 1
+                    continue
+                dev_level = getattr(dev, "level", None)
+                if dev_level not in allowed_levels:
+                    violation_count += 1
+
+        return violation_count
+
     # ---------- 训练主循环 ----------
     def train(self):
         # ---- 基本参数 ----
@@ -538,13 +682,32 @@ class ABGSK:
 
         # ---- helper: 轻量随机扰动 ----
         def mutate(arr: np.ndarray, p=0.05, step: int = 3) -> np.ndarray:
+            """
+            变异策略：
+            - soft 基因：在 [low, high] 区间内做局部扰动（±step），主要在设备集合里搜索资源更合适的点。
+            - sense/act 基因：直接在“可部署的 IoT 设备集合”中重采样，优先满足部署域约束。
+            """
             new = arr.copy()
-            device_num = len(self.device_list)
+
             for i in range(new.size):
-                if random.random() < p:
+                if random.random() >= p:
+                    continue
+
+                kind, task_id, cap_id = self.gene_meta[i]
+
+                if kind == "soft":
+                    # soft 不受部署域限制，保留原来的局部扰动逻辑
                     lo = max(self.low[i], int(new[i] - step))
                     hi = min(self.high[i], int(new[i] + step))
+                    if lo > hi:
+                        # 兜底：区间非法时直接用边界随机
+                        lo, hi = self.low[i], self.high[i]
                     new[i] = random.randint(lo, hi)
+                else:
+                    # sense/act：只用 IoT + 部署域限制
+                    dev_id = self._sample_feasible_device_for_cap(kind, task_id, cap_id)
+                    new[i] = dev_id
+
             return new
 
         # ---- 初始化种群：seed_chrom + 扰动 ----
@@ -709,9 +872,6 @@ class ABGSK:
             best_indv.append(bsf_solution.copy())
             loss.append(bsf_fit_var)
 
-            if g % 50 == 0 and no_improve_gen >= 50:
-                print(f"[EARLY STOP] no improvement for {no_improve_gen} generations.")
-                break
 
             # 自适应缩减种群规模
             plan_pop_size = round(
@@ -773,9 +933,10 @@ class ABGSK:
 
 def encode_global_placement_greedy(
         agent_instances: List[Tuple[int, int, int]],
-        agent_lookup: Dict[int, AgentTemplate],
+        agent_lookup,
         devices: List[Device],
-        device_map: Dict[int, Device],
+        device_map,
+        task_deploy_domains: Dict[int, Set[str]] | None = None,
         verbose: bool = False,
 ) -> List[int]:
     id_set = {d.id for d in devices}
@@ -808,6 +969,11 @@ def encode_global_placement_greedy(
         tpl = agent_lookup[agent_id]
         need = tpl.r
 
+        allowed_levels = None
+        if task_deploy_domains is not None:
+            allowed_levels = task_deploy_domains.get(task_id)
+
+        # soft 不限制部署域，只按能力+资源选
         cand_soft = [
             d for d in devices
             if tpl.C_soft.issubset(d.soft_cap) and fits(need, remaining[d.id])
@@ -820,21 +986,50 @@ def encode_global_placement_greedy(
         if verbose:
             print(f"[SOFT] Task {task_id}-M{module_id} Agent {agent_id} -> Dev {soft_dev}")
 
+        # 部署域约束：sense / act
+        allowed_levels = None
+        if task_deploy_domains is not None:
+            allowed_levels = task_deploy_domains.get(task_id)
+
+        # SENSE: 只在 IoT 设备且 level ∈ allowed_levels 的设备中选
         for τ in tpl.C_sense:
-            cand_sense = [d for d in devices if d.id <= device_number and (τ in d.sense_cap)]
+            cand_sense = []
+            for d in devices:
+                if d.id > device_number:
+                    continue  # 只用 IoT
+                if τ not in d.sense_cap:
+                    continue
+                if allowed_levels is not None:
+                    lvl = getattr(d, "level", None)
+                    if lvl not in allowed_levels:
+                        continue
+                cand_sense.append(d)
+
             sense_dev = cand_sense[0].id if cand_sense else soft_dev
             chrom.append(sense_dev)
             if verbose:
                 print(f"   [SENSE {τ}] -> Dev {sense_dev}")
 
+        # ACT: 同理
         for τ in tpl.C_act:
-            cand_act = [d for d in devices if d.id <= device_number and (τ in d.act_cap)]
+            cand_act = []
+            for d in devices:
+                if d.id > device_number:
+                    continue
+                if τ not in d.act_cap:
+                    continue
+                if allowed_levels is not None:
+                    lvl = getattr(d, "level", None)
+                    if lvl not in allowed_levels:
+                        continue
+                cand_act.append(d)
+
             act_dev = cand_act[0].id if cand_act else soft_dev
             chrom.append(act_dev)
             if verbose:
                 print(f"   [ACT {τ}] -> Dev {act_dev}")
-
     return chrom
+
 
 
 
