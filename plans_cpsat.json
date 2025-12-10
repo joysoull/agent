@@ -1,0 +1,829 @@
+[
+  {
+    "task_id": 1,
+    "modules": [
+      {
+        "module_id": 0,
+        "nodes": [
+          "act2",
+          "act3",
+          "proc2",
+          "proc5"
+        ],
+        "agent_id": 38,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 1,
+        "nodes": [
+          "act4",
+          "act5",
+          "proc3"
+        ],
+        "agent_id": 23,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 2,
+        "nodes": [
+          "act1",
+          "proc4"
+        ],
+        "agent_id": 35,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 3,
+        "nodes": [
+          "proc6",
+          "proc7",
+          "sense3"
+        ],
+        "agent_id": 8,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 4,
+        "nodes": [
+          "proc8",
+          "proc9",
+          "sense4"
+        ],
+        "agent_id": 16,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 5,
+        "nodes": [
+          "proc1",
+          "sense1",
+          "sense2"
+        ],
+        "agent_id": 34,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": [
+          {
+            "from_module": 5,
+            "to_module": 8,
+            "cap": 2
+          },
+          {
+            "from_module": 5,
+            "to_module": 9,
+            "cap": 1
+          }
+        ]
+      }
+    ],
+    "objective": 49.099999999999966,
+    "status": "FEASIBLE"
+  },
+  {
+    "task_id": 2,
+    "modules": [
+      {
+        "module_id": 0,
+        "nodes": [
+          "act1",
+          "act2",
+          "proc5"
+        ],
+        "agent_id": 40,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 1,
+        "nodes": [
+          "act3",
+          "proc3"
+        ],
+        "agent_id": 30,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 2,
+        "nodes": [
+          "proc1"
+        ],
+        "agent_id": 8,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 3,
+        "nodes": [
+          "proc2",
+          "proc6"
+        ],
+        "agent_id": 40,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 4,
+        "nodes": [
+          "proc4",
+          "sense3"
+        ],
+        "agent_id": 31,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 5,
+        "nodes": [
+          "proc7",
+          "proc8",
+          "sense1",
+          "sense2",
+          "sense4"
+        ],
+        "agent_id": 29,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      }
+    ],
+    "objective": 42.29999999999998,
+    "status": "OPTIMAL"
+  },
+  {
+    "task_id": 3,
+    "modules": [
+      {
+        "module_id": 0,
+        "nodes": [
+          "act3",
+          "proc6"
+        ],
+        "agent_id": 6,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 1,
+        "nodes": [
+          "act1",
+          "act2",
+          "proc3"
+        ],
+        "agent_id": 7,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 2,
+        "nodes": [
+          "proc1",
+          "proc2",
+          "sense1"
+        ],
+        "agent_id": 15,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 3,
+        "nodes": [
+          "proc4",
+          "proc5",
+          "sense2"
+        ],
+        "agent_id": 25,
+        "exit_count": 2,
+        "collaborations_in": [],
+        "collaborations_out": []
+      }
+    ],
+    "objective": 29.700000000000006,
+    "status": "OPTIMAL"
+  },
+  {
+    "task_id": 4,
+    "modules": [
+      {
+        "module_id": 0,
+        "nodes": [
+          "act2",
+          "proc5",
+          "proc7"
+        ],
+        "agent_id": 18,
+        "exit_count": 2,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 1,
+        "nodes": [
+          "act1"
+        ],
+        "agent_id": 6,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 2,
+        "nodes": [
+          "act3",
+          "proc3"
+        ],
+        "agent_id": 21,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 3,
+        "nodes": [
+          "proc2",
+          "proc4"
+        ],
+        "agent_id": 29,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 4,
+        "nodes": [
+          "proc6"
+        ],
+        "agent_id": 36,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 5,
+        "nodes": [
+          "proc1",
+          "sense1",
+          "sense2",
+          "sense3"
+        ],
+        "agent_id": 29,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      }
+    ],
+    "objective": 45.499999999999986,
+    "status": "OPTIMAL"
+  },
+  {
+    "task_id": 5,
+    "modules": [
+      {
+        "module_id": 0,
+        "nodes": [
+          "proc3",
+          "proc4",
+          "proc5"
+        ],
+        "agent_id": 18,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 1,
+        "nodes": [
+          "proc1",
+          "sense1",
+          "sense2"
+        ],
+        "agent_id": 31,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 2,
+        "nodes": [
+          "act1",
+          "act2",
+          "proc2"
+        ],
+        "agent_id": 19,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      }
+    ],
+    "objective": 19.800000000000004,
+    "status": "OPTIMAL"
+  },
+  {
+    "task_id": 6,
+    "modules": [
+      {
+        "module_id": 0,
+        "nodes": [
+          "act2",
+          "act3",
+          "act4",
+          "proc8"
+        ],
+        "agent_id": 8,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 1,
+        "nodes": [
+          "proc6"
+        ],
+        "agent_id": 31,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 2,
+        "nodes": [
+          "proc7",
+          "proc9",
+          "sense2"
+        ],
+        "agent_id": 40,
+        "exit_count": 2,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 3,
+        "nodes": [
+          "proc1",
+          "proc2",
+          "proc3",
+          "sense1",
+          "sense3"
+        ],
+        "agent_id": 2,
+        "exit_count": 2,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 4,
+        "nodes": [
+          "proc4"
+        ],
+        "agent_id": 40,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": [
+          {
+            "from_module": 4,
+            "to_module": 6,
+            "cap": 3
+          },
+          {
+            "from_module": 4,
+            "to_module": 9,
+            "cap": 2
+          }
+        ]
+      },
+      {
+        "module_id": 5,
+        "nodes": [
+          "act1",
+          "proc5"
+        ],
+        "agent_id": 7,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      }
+    ],
+    "objective": 45.5,
+    "status": "OPTIMAL"
+  },
+  {
+    "task_id": 7,
+    "modules": [
+      {
+        "module_id": 0,
+        "nodes": [
+          "act1",
+          "proc10",
+          "proc8"
+        ],
+        "agent_id": 27,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 1,
+        "nodes": [
+          "proc9"
+        ],
+        "agent_id": 31,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 2,
+        "nodes": [
+          "act2",
+          "act4",
+          "proc3"
+        ],
+        "agent_id": 40,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": [
+          {
+            "from_module": 2,
+            "to_module": 9,
+            "cap": 1
+          }
+        ]
+      },
+      {
+        "module_id": 3,
+        "nodes": [
+          "act3",
+          "proc2",
+          "proc4"
+        ],
+        "agent_id": 4,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 4,
+        "nodes": [
+          "proc6",
+          "proc7",
+          "sense2"
+        ],
+        "agent_id": 40,
+        "exit_count": 2,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 5,
+        "nodes": [
+          "proc5",
+          "sense1"
+        ],
+        "agent_id": 26,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 6,
+        "nodes": [
+          "proc1",
+          "sense3",
+          "sense4"
+        ],
+        "agent_id": 14,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      }
+    ],
+    "objective": 56.599999999999966,
+    "status": "FEASIBLE"
+  },
+  {
+    "task_id": 8,
+    "modules": [
+      {
+        "module_id": 0,
+        "nodes": [
+          "act1",
+          "proc11"
+        ],
+        "agent_id": 27,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 1,
+        "nodes": [
+          "proc7"
+        ],
+        "agent_id": 37,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 2,
+        "nodes": [
+          "proc10",
+          "proc12",
+          "proc2"
+        ],
+        "agent_id": 33,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": [
+          {
+            "from_module": 2,
+            "to_module": 9,
+            "cap": 1
+          }
+        ]
+      },
+      {
+        "module_id": 3,
+        "nodes": [
+          "act2",
+          "proc4"
+        ],
+        "agent_id": 27,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 4,
+        "nodes": [
+          "act3",
+          "act4",
+          "proc5"
+        ],
+        "agent_id": 17,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": [
+          {
+            "from_module": 4,
+            "to_module": 8,
+            "cap": 2
+          }
+        ]
+      },
+      {
+        "module_id": 5,
+        "nodes": [
+          "proc9",
+          "sense3",
+          "sense4"
+        ],
+        "agent_id": 33,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": [
+          {
+            "from_module": 5,
+            "to_module": 9,
+            "cap": 1
+          }
+        ]
+      },
+      {
+        "module_id": 6,
+        "nodes": [
+          "proc1",
+          "proc3",
+          "sense1"
+        ],
+        "agent_id": 27,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": [
+          {
+            "from_module": 6,
+            "to_module": 9,
+            "cap": 1
+          }
+        ]
+      },
+      {
+        "module_id": 7,
+        "nodes": [
+          "proc6",
+          "proc8",
+          "sense2"
+        ],
+        "agent_id": 40,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      }
+    ],
+    "objective": 60.89999999999994,
+    "status": "FEASIBLE"
+  },
+  {
+    "task_id": 9,
+    "modules": [
+      {
+        "module_id": 0,
+        "nodes": [
+          "act2",
+          "proc6"
+        ],
+        "agent_id": 18,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 1,
+        "nodes": [
+          "act4",
+          "act5"
+        ],
+        "agent_id": 6,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 2,
+        "nodes": [
+          "proc5",
+          "proc7",
+          "sense3"
+        ],
+        "agent_id": 27,
+        "exit_count": 2,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 3,
+        "nodes": [
+          "proc8"
+        ],
+        "agent_id": 6,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 4,
+        "nodes": [
+          "act1",
+          "proc3"
+        ],
+        "agent_id": 40,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": [
+          {
+            "from_module": 4,
+            "to_module": 9,
+            "cap": 1
+          }
+        ]
+      },
+      {
+        "module_id": 5,
+        "nodes": [
+          "proc2",
+          "proc9"
+        ],
+        "agent_id": 18,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 6,
+        "nodes": [
+          "act3",
+          "proc4"
+        ],
+        "agent_id": 23,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 7,
+        "nodes": [
+          "proc1",
+          "sense1",
+          "sense2"
+        ],
+        "agent_id": 6,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      }
+    ],
+    "objective": 65.59999999999995,
+    "status": "FEASIBLE"
+  },
+  {
+    "task_id": 10,
+    "modules": [
+      {
+        "module_id": 0,
+        "nodes": [
+          "act1",
+          "proc6",
+          "proc8"
+        ],
+        "agent_id": 16,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 1,
+        "nodes": [
+          "proc7",
+          "sense4"
+        ],
+        "agent_id": 29,
+        "exit_count": 2,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 2,
+        "nodes": [
+          "act2",
+          "act3",
+          "proc4"
+        ],
+        "agent_id": 23,
+        "exit_count": 0,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 3,
+        "nodes": [
+          "proc5",
+          "sense1",
+          "sense3"
+        ],
+        "agent_id": 29,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      },
+      {
+        "module_id": 4,
+        "nodes": [
+          "proc2"
+        ],
+        "agent_id": 36,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": [
+          {
+            "from_module": 4,
+            "to_module": 9,
+            "cap": 1
+          }
+        ]
+      },
+      {
+        "module_id": 5,
+        "nodes": [
+          "proc1",
+          "proc3",
+          "sense2",
+          "sense5"
+        ],
+        "agent_id": 8,
+        "exit_count": 1,
+        "collaborations_in": [],
+        "collaborations_out": []
+      }
+    ],
+    "objective": 49.799999999999976,
+    "status": "FEASIBLE"
+  }
+]
