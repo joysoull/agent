@@ -282,7 +282,8 @@ def evaluation_func(chromosome: list,
                     alpha: float = 0.5,  # 时间权重
                     beta: float = 0.5,   # 能耗权重
                     return_detail: bool = False,
-                    _placement_override: Optional[Dict] = None):
+                    _placement_override: Optional[Dict] = None,
+                    exec_time_cache: Optional[Dict[Tuple[int, int], float]] = None):
     """
     使用 SAC 中的 ``evaluation_func_rl`` 评估个体，保持原有返回格式。
 
@@ -304,7 +305,14 @@ def evaluation_func(chromosome: list,
         task_placement = {k: v for k, v in placement.items() if k[0] == idx}
         if not task_placement:
             continue
-        mk, energy, detail = evaluation_func_rl(task_placement, task_graph, agent_lookup, device_map, gw_matrix)
+        mk, energy, detail = evaluation_func_rl(
+            task_placement,
+            task_graph,
+            agent_lookup,
+            device_map,
+            gw_matrix,
+            exec_time_cache=exec_time_cache,
+        )
         total_makespan += mk
         total_energy += energy
         if isinstance(detail, dict):
@@ -384,6 +392,18 @@ class ABGSK:
         self.device_map.update({e.id: e for e in edge_list})
         self.device_map[cloud.id] = cloud
 
+        # 预计算 (agent_id, device_id) 的核心执行时间，避免评估时重复算
+        self.exec_time_cache: Dict[Tuple[int, int], float] = {}
+        for agent_id, tpl in self.agent_lookup.items():
+            r_cpu, _, r_gpu, _, _, _ = tpl.r
+            for dev_id, dev in self.device_map.items():
+                res = dev.resource
+                cpu_cap = float(getattr(res, "cpu", 0.0))
+                gpu_cap = float(getattr(res, "gpu", 0.0))
+                cpu_time = (r_cpu / cpu_cap) if cpu_cap > 0 else float('inf')
+                gpu_time = (r_gpu / gpu_cap) if gpu_cap > 0 else 0.0
+                self.exec_time_cache[(agent_id, dev_id)] = max(cpu_time, gpu_time)
+
         # ---- 构建基因边界（low/high）----
         low_list = []
         high_list = []
@@ -432,6 +452,7 @@ class ABGSK:
             self.task_graphs,
             alpha=self.alpha,
             beta=self.beta,
+            exec_time_cache=self.exec_time_cache,
         )
         fval = self.alpha * mp + self.beta * energy + penalty
         print(f"[SEED] fitness {fval:.3f} | makespan {mp:.3f} | energy {energy:.3f} | "
@@ -469,6 +490,7 @@ class ABGSK:
                 self.task_graphs,
                 alpha=self.alpha,
                 beta=self.beta,
+                exec_time_cache=self.exec_time_cache,
             )
             makespan[i] = mp
             total_energy[i] = energy
@@ -505,7 +527,7 @@ class ABGSK:
         # ---- 基本参数 ----
         if self.pop_size is None:
             self.pop_size = 40 * self.problem_size if self.problem_size > 5 else 100
-        max_nfes = 10000 * self.problem_size
+        max_nfes = 1000 * self.problem_size
         if self.max_g is None:
             self.max_g = max_nfes  # 和原论文一致
 
@@ -515,18 +537,14 @@ class ABGSK:
         min_pop_size = 12
 
         # ---- helper: 轻量随机扰动 ----
-        def mutate(arr: np.ndarray, p=0.05) -> np.ndarray:
+        def mutate(arr: np.ndarray, p=0.05, step: int = 3) -> np.ndarray:
             new = arr.copy()
             device_num = len(self.device_list)
             for i in range(new.size):
                 if random.random() < p:
-                    # 根据索引位置判断类型：soft or sense/act
-                    if i == 0:
-                        # 第一个一定是 soft
-                        new[i] = random.randint(1, self.cloud.id)
-                    else:
-                        # 统一用边界裁剪，不再手动区别；后面会用 boundConstraint
-                        new[i] = random.randint(self.low[i], self.high[i])
+                    lo = max(self.low[i], int(new[i] - step))
+                    hi = min(self.high[i], int(new[i] + step))
+                    new[i] = random.randint(lo, hi)
             return new
 
         # ---- 初始化种群：seed_chrom + 扰动 ----
@@ -543,6 +561,7 @@ class ABGSK:
         nfes = 0
         bsf_fit_var = 1e+300
         bsf_solution = popold[0].copy()
+        no_improve_gen = 0
 
         for i in range(self.pop_size):
             nfes += 1
@@ -656,10 +675,13 @@ class ABGSK:
                 if child_fit[i] < bsf_fit_var:
                     bsf_fit_var = child_fit[i]
                     bsf_solution = ui[i, :].copy()
+                    no_improve_gen = 0
                     print(f"[Gen {g}] best_f={bsf_fit_var:.3f} | "
                           f"ms={child_ms[i]:.3f} | E={child_energy[i]:.3f} | "
                           f"pen={child_pen[i]:.3f} | res={child_res[i]:.3f} | "
                           f"cap={child_cap[i]:.3f} | bw={child_bw[i]:.3f} | lat={child_lat[i]:.3f}")
+                else:
+                    no_improve_gen += 1
 
             # 统计各策略贡献
             dif = np.abs(fitness - child_fit)
@@ -686,6 +708,10 @@ class ABGSK:
 
             best_indv.append(bsf_solution.copy())
             loss.append(bsf_fit_var)
+
+            if g % 50 == 0 and no_improve_gen >= 50:
+                print(f"[EARLY STOP] no improvement for {no_improve_gen} generations.")
+                break
 
             # 自适应缩减种群规模
             plan_pop_size = round(

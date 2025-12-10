@@ -7,6 +7,7 @@
 """
 import json
 from collections import defaultdict, deque
+from functools import lru_cache
 from typing import Dict, List, Tuple, Any, Optional
 import hashlib
 import networkx as nx
@@ -350,7 +351,8 @@ def evaluation_func_rl(
         task_graph: 'TaskGraph',  # 使用引号避免循环导入
         agent_lookup: Dict[int, 'AgentTemplate'],
         device_map: Dict[int, 'Device'],
-        gw_matrix: np.ndarray
+        gw_matrix: np.ndarray,
+        exec_time_cache: Optional[Dict[Tuple[int, int], float]] = None,
 ) -> tuple[float, float, float] | tuple[float, float, dict[str, float]]:
     """
     方案B：构造"三相位"模块图（pre/core/post），
@@ -360,6 +362,18 @@ def evaluation_func_rl(
     - 跨模块边统一用 U(core)→V(core) 承载通信延迟
     仅返回 makespan，能耗与惩罚置 0.0
     """
+    @lru_cache(maxsize=100000)
+    def cached_transmission_delay(src_id: int, dst_id: int, data_size_mb: float, bw_req: float):
+        src = device_map[src_id]
+        dst = device_map[dst_id]
+        return compute_transmission_delay(
+            src=src,
+            dst=dst,
+            data_size_mb=data_size_mb,
+            bw_req=bw_req,
+            gw_matrix=gw_matrix,
+        )
+
     # --- 初始化 ---
     # --- 映射：节点 -> 模块 ---
     node_to_module_map: Dict[str, int] = {}
@@ -394,14 +408,18 @@ def evaluation_func_rl(
     # --- 1) 每个模块的执行时间（core 相位） ---
     exec_time_map: Dict[Tuple[int, Any], float] = {}  # (task_id, phase_node) -> time(s)
     for (tid, module_id), info in placement.items():
-        agent = agent_lookup[info["agent_id"]]
-        res = device_map[info["soft_device"]].resource
-        r_cpu, _, r_gpu, _, _, _ = agent.r
-        cpu_cap = float(getattr(res, "cpu", 0.0))
-        gpu_cap = float(getattr(res, "gpu", 0.0))
-        cpu_time = (r_cpu / cpu_cap) if cpu_cap > 0 else float('inf')
-        gpu_time = (r_gpu / gpu_cap) if gpu_cap > 0 else 0.0
-        core_time = max(cpu_time, gpu_time)
+        core_time = None
+        if exec_time_cache is not None:
+            core_time = exec_time_cache.get((info["agent_id"], info["soft_device"]))
+        if core_time is None:
+            agent = agent_lookup[info["agent_id"]]
+            res = device_map[info["soft_device"]].resource
+            r_cpu, _, r_gpu, _, _, _ = agent.r
+            cpu_cap = float(getattr(res, "cpu", 0.0))
+            gpu_cap = float(getattr(res, "gpu", 0.0))
+            cpu_time = (r_cpu / cpu_cap) if cpu_cap > 0 else float('inf')
+            gpu_time = (r_gpu / gpu_cap) if gpu_cap > 0 else 0.0
+            core_time = max(cpu_time, gpu_time)
 
         # 三相位节点键
         n_pre = (module_id, "pre")
@@ -430,12 +448,11 @@ def evaluation_func_rl(
         u_type = task_graph.G.nodes[u].get("type", "proc")
         v_type = task_graph.G.nodes[v].get("type", "proc")
 
-        delay_ms, _, _ = compute_transmission_delay(
-            src=device_map[du],
-            dst=device_map[dv],
-            data_size_mb=attr.get("data_size", 0.0),
-            bw_req=attr.get("bandwidth_req", 0.0),
-            gw_matrix=gw_matrix
+        delay_ms, _, _ = cached_transmission_delay(
+            du,
+            dv,
+            attr.get("data_size", 0.0),
+            attr.get("bandwidth_req", 0.0),
         )
 
         if u_type == "sense" and v_type == "proc":
@@ -475,12 +492,11 @@ def evaluation_func_rl(
         if du == dv:
             delay_sec = 0.0
         else:
-            d_ms, _, _ = compute_transmission_delay(
-                src=device_map[du],
-                dst=device_map[dv],
-                data_size_mb=attr.get("data_size", 0.0),
-                bw_req=attr.get("bandwidth_req", 0.0),
-                gw_matrix=gw_matrix
+            d_ms, _, _ = cached_transmission_delay(
+                du,
+                dv,
+                attr.get("data_size", 0.0),
+                attr.get("bandwidth_req", 0.0),
             )
             delay_sec = float(d_ms) / 1000.0
 
@@ -544,9 +560,11 @@ def evaluation_func_rl(
             lat_req = 20.0 if (u_type == "sense" and v_type == "proc") or (
                     u_type == "proc" and v_type == "act") else LAT_REQ_DEFAULT
 
-        _, _, ej = compute_transmission_delay(
-            src=device_map[du], dst=device_map[dv],
-            data_size_mb=data_mb, bw_req=bw_req, gw_matrix=gw_matrix
+        _, _, ej = cached_transmission_delay(
+            du,
+            dv,
+            data_mb,
+            bw_req,
         )
         comm_energy_J += float(ej)
     energy_bd = {
