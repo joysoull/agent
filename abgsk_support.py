@@ -82,6 +82,7 @@ def load_infrastructure(
     cloud = Device(
         type=cloud_data["type"],
         id=cloud_data["id"],
+        conn_type=cloud_data.get("conn_type", "wired"),
         resource=Resource(**cloud_data["resource"]),
         act_cap=set(cloud_data["act_cap"]),
         sense_cap=set(cloud_data["sense_cap"]),
@@ -97,6 +98,7 @@ def load_infrastructure(
             Device(
                 type=dev["type"],
                 id=dev["id"],
+                conn_type=dev.get("conn_type", "wired"),
                 resource=Resource(**dev["resource"]),
                 act_cap=set(dev["act_cap"]),
                 sense_cap=set(dev["sense_cap"]),
@@ -113,6 +115,7 @@ def load_infrastructure(
             Device(
                 type=edge["type"],
                 id=edge["id"],
+                conn_type=edge.get("conn_type", "wired"),
                 resource=Resource(**edge["resource"]),
                 act_cap=set(edge["act_cap"]),
                 sense_cap=set(edge["sense_cap"]),

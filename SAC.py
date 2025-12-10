@@ -55,6 +55,7 @@ def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_ma
     cloud = Device(
         type=cloud_data["type"],
         id=cloud_data["id"],
+        conn_type=cloud_data.get("conn_type", "wired"),
         resource=Resource(**cloud_data["resource"]),
         act_cap=set(cloud_data["act_cap"]),
         sense_cap=set(cloud_data["sense_cap"]),
@@ -69,6 +70,7 @@ def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_ma
         device_list.append(Device(
             type=dev["type"],
             id=dev["id"],
+            conn_type=dev.get("conn_type", "wired"),
             resource=Resource(**dev["resource"]),
             act_cap=set(dev["act_cap"]),
             sense_cap=set(dev["sense_cap"]),
@@ -83,6 +85,7 @@ def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_ma
         edge_list.append(Device(
             type=edge["type"],
             id=edge["id"],
+            conn_type=edge.get("conn_type", "wired"),
             resource=Resource(**edge["resource"]),
             act_cap=set(edge["act_cap"]),
             sense_cap=set(edge["sense_cap"]),
@@ -136,7 +139,8 @@ def compute_transmission_delay(src, dst,
     """
     # ---------------- 0. 同设备 ----------------
     if src.id == dst.id:
-        return 0.0, True, 0.0
+        same_bw = max(getattr(src, "bandwidth", 0.0), getattr(dst, "bandwidth", 0.0))
+        return 0.0, same_bw, 0.0
 
     # ---------- 类型布尔 ----------
     src_iot = src.type == "Device"
@@ -149,44 +153,58 @@ def compute_transmission_delay(src, dst,
     bits = data_size_mb * 8 * 1e6  # 转 bit
 
     # ---------- 辅助: 计算 UL / DL delay ----------
-    # ------- 子函数：UL / DL -------
-    # ------ UL / DL helper ------
-    # ------ UL / DL helper (已修正) ------
+    def _get_gateway_idx(dev_iot):
+        if getattr(dev_iot, "conn_type", "wired") != "wireless":
+            return None
+        gw_row = gw_matrix[dev_iot.id - 1]
+        if not np.any(gw_row > 0):
+            return None
+        return int(np.where(gw_row > 0)[0][0])
+
+    def _wired_delay_energy(dev_iot):
+        rate = dev_iot.bandwidth
+        prop_delay = dev_iot.delay
+        transmission_time_s = _get_transmission_time_s(data_size_mb, rate)
+        total_delay_ms = transmission_time_s * 1000 + prop_delay
+        energy_j = E_per_bit_wired * bits
+        return total_delay_ms, rate, energy_j
 
     def ul_delay_energy(dev_iot):
-        # <<< FIX: 使用 dev_iot 的属性，而不是全局的 src >>>
+        if getattr(dev_iot, "conn_type", "wired") != "wireless":
+            delay_ms, rate, energy_j = _wired_delay_energy(dev_iot)
+            return delay_ms, rate, energy_j, None
+
         rate = dev_iot.bandwidth  # Mbps
         prop_delay = dev_iot.delay  # ms
-        gw_row = gw_matrix[dev_iot.id - 1]
-        gw_idx = int(np.where(gw_row > 0)[0][0]) if np.any(gw_row > 0) else -1
+        gw_idx = _get_gateway_idx(dev_iot)
+        if gw_idx is None:
+            return float("inf"), 0.0, float("inf"), None
 
-        # <<< FIX: 正确计算传输时间、总延迟和能耗 >>>
         transmission_time_s = _get_transmission_time_s(data_size_mb, rate)
         total_delay_ms = transmission_time_s * 1000 + prop_delay
         energy_j = (P_TX_IOT + P_RX_AP) * transmission_time_s
-
-        # <<< FIX: 返回实际速率和以焦耳为单位的能耗 >>>
         return total_delay_ms, rate, energy_j, gw_idx
 
     def dl_delay_energy(dev_iot, gw_idx):
-        # <<< FIX: 使用 dev_iot 的属性 >>>
-        # 注意：下行速率可能与上行不同，这里为简化假设相同，实际可从dev_iot或gw获取
+        if getattr(dev_iot, "conn_type", "wired") != "wireless":
+            return _wired_delay_energy(dev_iot)
+
+        if gw_idx is None:
+            return float("inf"), 0.0, float("inf")
+
         rate = dev_iot.bandwidth
         prop_delay = dev_iot.delay
-
-        # <<< FIX: 正确计算 >>>
         transmission_time_s = _get_transmission_time_s(data_size_mb, rate)
         total_delay_ms = transmission_time_s * 1000 + prop_delay
         energy_j = (P_TX_AP + P_RX_IOT) * transmission_time_s
-
-        # <<< FIX: 返回实际速率和以焦耳为单位的能耗 >>>
         return total_delay_ms, rate, energy_j
 
     # ------ 场景 1: IoT → IoT ------
     if src_iot and dst_iot:
         T_ul, rate_ul, E_ul, gw_u = ul_delay_energy(src)
-        T_dl, rate_dl, E_dl, = dl_delay_energy(dst, gw_u)
-        same_gw = gw_u == np.where(gw_matrix[dst.id - 1] > 0)[0][0]
+        dst_gw = _get_gateway_idx(dst)
+        T_dl, rate_dl, E_dl, = dl_delay_energy(dst, dst_gw)
+        same_gw = gw_u is not None and dst_gw is not None and gw_u == dst_gw
 
         total_delay = T_ul + T_dl + (0 if same_gw else edge_inter_delay)
         total_energy = E_ul + E_dl
@@ -207,13 +225,13 @@ def compute_transmission_delay(src, dst,
         return T_ul + cloud_edge_delay, rate_ul, E_ul + E_wired
     # ------ Edge → IoT ------
     if src_edge and dst_iot:
-        gw_idx = np.where(gw_matrix[dst.id - 1] > 0)[0][0]
+        gw_idx = _get_gateway_idx(dst)
         T_dl, rate_dl, E_dl = dl_delay_energy(dst, gw_idx)
         E_wired = E_per_bit_wired * bits
         return T_dl + edge_inter_delay, rate_dl, E_dl + E_wired
     # ------ Cloud → IoT ------
     if src_cloud and dst_iot:
-        gw_idx = np.where(gw_matrix[dst.id - 1] > 0)[0][0]
+        gw_idx = _get_gateway_idx(dst)
         T_dl, rate_dl, E_dl = dl_delay_energy(dst, gw_idx)
         E_wired = E_per_bit_wired * bits
         return T_dl + cloud_edge_delay, rate_dl, E_dl + E_wired
