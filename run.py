@@ -1,13 +1,14 @@
 import json
 import os
 import random
+from functools import lru_cache
 from typing import List, Tuple, Dict, Optional
 import numpy as np
 import pandas as pd
 from simulation import Device, Resource
 from partiation import AgentTemplate, parse_capability_field
 import networkx as nx
-from SAC import evaluation_func_rl
+from SAC import evaluation_func_rl, compute_transmission_delay
 
 
 def load_infrastructure(config_path="infrastructure_config.json", gw_path="gw_matrix.npy"):
@@ -268,6 +269,12 @@ AL_PARAMS = {
 }
 
 
+def _augmented_penalty(h_val: float, lam: float, mu: float) -> float:
+    """根据增广拉格朗日形式计算单个约束的惩罚值。"""
+
+    return lam * h_val + 0.5 * mu * (h_val ** 2)
+
+
 # ---------------------- 归一化辅助函数 ----------------------
 N_RES_DIM = 4  # cpu_num, gpu_mem, ram, disk 四维
 
@@ -282,7 +289,8 @@ def evaluation_func(chromosome: list,
                     alpha: float = 0.5,  # 时间权重
                     beta: float = 0.5,   # 能耗权重
                     return_detail: bool = False,
-                    _placement_override: Optional[Dict] = None):
+                    _placement_override: Optional[Dict] = None,
+                    exec_time_cache: Optional[Dict[Tuple[int, int], float]] = None):
     """
     使用 SAC 中的 ``evaluation_func_rl`` 评估个体，保持原有返回格式。
 
@@ -296,25 +304,141 @@ def evaluation_func(chromosome: list,
 
     total_makespan = 0.0
     total_energy = 0.0
+    total_penalty = 0.0
+    res_violation = 0.0
+    cap_violation = 0.0
+    bw_violation = 0.0
+    lat_violation = 0.0
     detail_map: Dict[int, Dict[str, float]] = {}
 
     placement = attach_nodes_to_placement(placement, node_map)
 
+    def get_device_for_node(node_id: str, task_graph: TaskGraph) -> Optional[int]:
+        # 与 SAC.evaluation_func_rl 内部逻辑保持一致
+        module_id = node_map.get((task_id, str(node_id)), (None, None))[1]
+        if module_id is None:
+            return None
+        mod_place = placement.get((task_id, module_id))
+        if mod_place is None:
+            return None
+
+        ninfo = task_graph.G.nodes[node_id]
+        ntype = ninfo.get("type", "proc")
+        if ntype == "proc":
+            return mod_place["soft_device"]
+        idx = ninfo.get("idx")
+        if ntype == "sense":
+            return mod_place["sense_map"].get(idx)
+        if ntype == "act":
+            return mod_place["act_map"].get(idx)
+        return None
+
+    @lru_cache(maxsize=200000)
+    def cached_transmission_delay(src_id: int, dst_id: int, data_size_mb: float, bw_req: float):
+        src = device_map[src_id]
+        dst = device_map[dst_id]
+        return compute_transmission_delay(
+            src=src,
+            dst=dst,
+            data_size_mb=data_size_mb,
+            bw_req=bw_req,
+            gw_matrix=gw_matrix,
+        )
+
     for idx, task_graph in enumerate(task_graphs, start=1):
         task_placement = {k: v for k, v in placement.items() if k[0] == idx}
+        task_id = idx
         if not task_placement:
             continue
-        mk, energy, detail = evaluation_func_rl(task_placement, task_graph, agent_lookup, device_map, gw_matrix)
+        mk, energy, detail = evaluation_func_rl(
+            task_placement,
+            task_graph,
+            agent_lookup,
+            device_map,
+            gw_matrix,
+            exec_time_cache=exec_time_cache,
+        )
         total_makespan += mk
         total_energy += energy
         if isinstance(detail, dict):
             detail_map[idx] = detail
 
+        # -------- 约束违反统计：增广拉格朗日 --------
+        # 1) 资源约束：需求/供给超额部分按比例累计
+        for (tid, module_id), info in task_placement.items():
+            agent_tpl = agent_lookup[info["agent_id"]]
+            dev = device_map[info["soft_device"]]
+            demand = agent_tpl.r
+            supply = (
+                float(getattr(dev.resource, "cpu", 0.0)),
+                float(getattr(dev.resource, "num", 0.0)),
+                float(getattr(dev.resource, "gpu", 0.0)),
+                float(getattr(dev.resource, "gpu_mem", 0.0)),
+                float(getattr(dev.resource, "ram", 0.0)),
+                float(getattr(dev.resource, "disk", 0.0)),
+            )
+            for req, cap in zip(demand, supply):
+                if cap <= 0:
+                    res_violation += 1.0
+                else:
+                    res_violation += max((req - cap) / cap, 0.0)
+
+            # 2) 能力约束：所需能力设备缺失计入违反
+            missing_soft = agent_tpl.C_soft - dev.soft_cap
+            cap_violation += len(missing_soft)
+            for sense_cap, dev_id in info["sense_map"].items():
+                sense_dev = device_map.get(dev_id)
+                if sense_dev is None or sense_cap not in sense_dev.sense_cap:
+                    cap_violation += 1.0
+            for act_cap, dev_id in info["act_map"].items():
+                act_dev = device_map.get(dev_id)
+                if act_dev is None or act_cap not in act_dev.act_cap:
+                    cap_violation += 1.0
+
+        # 3) 带宽/时延约束：遍历任务图边
+        for u, v, attr in task_graph.get_dependencies():
+            du = get_device_for_node(u, task_graph)
+            dv = get_device_for_node(v, task_graph)
+            if du is None or dv is None or du == dv:
+                continue
+
+            data_mb = attr.get("data_size", 0.0)
+            bw_req = attr.get("bandwidth_req", 0.0)
+            lat_req = attr.get("latency_req", 0.0)
+
+            delay_ms, rate_mbps, _ = cached_transmission_delay(du, dv, data_mb, bw_req)
+
+            if bw_req > 0:
+                bw_violation += max((bw_req - rate_mbps) / max(bw_req, 1e-6), 0.0)
+            if lat_req > 0:
+                lat_violation += max((delay_ms - lat_req) / max(lat_req, 1e-6), 0.0)
+
+    total_penalty += _augmented_penalty(res_violation, AL_PARAMS["resource"]["lam"], AL_PARAMS["resource"]["mu"])
+    total_penalty += _augmented_penalty(cap_violation, AL_PARAMS["capability"]["lam"], AL_PARAMS["capability"]["mu"])
+    total_penalty += _augmented_penalty(bw_violation, AL_PARAMS["bandwidth"]["lam"], AL_PARAMS["bandwidth"]["mu"])
+    total_penalty += _augmented_penalty(lat_violation, AL_PARAMS["latency"]["lam"], AL_PARAMS["latency"]["mu"])
+
     if return_detail:
-        metrics = (total_makespan, total_energy, 0.0, 0.0, 0.0, 0.0, 0.0)
+        metrics = (
+            total_makespan,
+            total_energy,
+            total_penalty,
+            res_violation,
+            cap_violation,
+            bw_violation,
+            lat_violation,
+        )
         return metrics, {"details": detail_map}
 
-    return total_makespan, total_energy, 0.0, 0.0, 0.0, 0.0, 0.0
+    return (
+        total_makespan,
+        total_energy,
+        total_penalty,
+        res_violation,
+        cap_violation,
+        bw_violation,
+        lat_violation,
+    )
 
 
 
@@ -384,6 +508,18 @@ class ABGSK:
         self.device_map.update({e.id: e for e in edge_list})
         self.device_map[cloud.id] = cloud
 
+        # 预计算 (agent_id, device_id) 的核心执行时间，避免评估时重复算
+        self.exec_time_cache: Dict[Tuple[int, int], float] = {}
+        for agent_id, tpl in self.agent_lookup.items():
+            r_cpu, _, r_gpu, _, _, _ = tpl.r
+            for dev_id, dev in self.device_map.items():
+                res = dev.resource
+                cpu_cap = float(getattr(res, "cpu", 0.0))
+                gpu_cap = float(getattr(res, "gpu", 0.0))
+                cpu_time = (r_cpu / cpu_cap) if cpu_cap > 0 else float('inf')
+                gpu_time = (r_gpu / gpu_cap) if gpu_cap > 0 else 0.0
+                self.exec_time_cache[(agent_id, dev_id)] = max(cpu_time, gpu_time)
+
         # ---- 构建基因边界（low/high）----
         low_list = []
         high_list = []
@@ -432,6 +568,7 @@ class ABGSK:
             self.task_graphs,
             alpha=self.alpha,
             beta=self.beta,
+            exec_time_cache=self.exec_time_cache,
         )
         fval = self.alpha * mp + self.beta * energy + penalty
         print(f"[SEED] fitness {fval:.3f} | makespan {mp:.3f} | energy {energy:.3f} | "
@@ -469,6 +606,7 @@ class ABGSK:
                 self.task_graphs,
                 alpha=self.alpha,
                 beta=self.beta,
+                exec_time_cache=self.exec_time_cache,
             )
             makespan[i] = mp
             total_energy[i] = energy
@@ -480,6 +618,22 @@ class ABGSK:
             fval[i] = self.alpha * mp + self.beta * energy + penalty
 
         return fval, makespan, total_energy, L_penalty, h_res_sum, h_cap_sum, h_bw_sum, h_lat_sum
+
+    def _update_al_multipliers(self, res_violation: float, cap_violation: float, bw_violation: float, lat_violation: float):
+        """根据当前种群的平均违反度自适应更新增广拉格朗日乘子。"""
+
+        tol = 1e-4
+        rho = 1.5
+        stats = {
+            "resource": res_violation,
+            "capability": cap_violation,
+            "bandwidth": bw_violation,
+            "latency": lat_violation,
+        }
+        for key, h in stats.items():
+            AL_PARAMS[key]["lam"] = max(0.0, AL_PARAMS[key]["lam"] + AL_PARAMS[key]["mu"] * h)
+            if h > tol:
+                AL_PARAMS[key]["mu"] = min(AL_PARAMS[key]["mu"] * rho, 1e12)
 
     # ---------- sense/act 约束检查（调试用） ----------
     def check_sense_act_constraints(self, chromosome):
@@ -505,7 +659,7 @@ class ABGSK:
         # ---- 基本参数 ----
         if self.pop_size is None:
             self.pop_size = 40 * self.problem_size if self.problem_size > 5 else 100
-        max_nfes = 10000 * self.problem_size
+        max_nfes = 1000 * self.problem_size
         if self.max_g is None:
             self.max_g = max_nfes  # 和原论文一致
 
@@ -515,18 +669,14 @@ class ABGSK:
         min_pop_size = 12
 
         # ---- helper: 轻量随机扰动 ----
-        def mutate(arr: np.ndarray, p=0.05) -> np.ndarray:
+        def mutate(arr: np.ndarray, p=0.05, step: int = 3) -> np.ndarray:
             new = arr.copy()
             device_num = len(self.device_list)
             for i in range(new.size):
                 if random.random() < p:
-                    # 根据索引位置判断类型：soft or sense/act
-                    if i == 0:
-                        # 第一个一定是 soft
-                        new[i] = random.randint(1, self.cloud.id)
-                    else:
-                        # 统一用边界裁剪，不再手动区别；后面会用 boundConstraint
-                        new[i] = random.randint(self.low[i], self.high[i])
+                    lo = max(self.low[i], int(new[i] - step))
+                    hi = min(self.high[i], int(new[i] + step))
+                    new[i] = random.randint(lo, hi)
             return new
 
         # ---- 初始化种群：seed_chrom + 扰动 ----
@@ -543,6 +693,7 @@ class ABGSK:
         nfes = 0
         bsf_fit_var = 1e+300
         bsf_solution = popold[0].copy()
+        no_improve_gen = 0
 
         for i in range(self.pop_size):
             nfes += 1
@@ -649,6 +800,14 @@ class ABGSK:
 
             child_fit, child_ms, child_energy, child_pen, child_res, child_cap, child_bw, child_lat = self.evaluation_func(ui)
 
+            # 基于当前种群平均违反度自适应调整增广拉格朗日参数
+            self._update_al_multipliers(
+                float(np.mean(child_res)),
+                float(np.mean(child_cap)),
+                float(np.mean(child_bw)),
+                float(np.mean(child_lat)),
+            )
+
             for i in range(self.pop_size):
                 nfes += 1
                 if nfes > max_nfes:
@@ -656,10 +815,13 @@ class ABGSK:
                 if child_fit[i] < bsf_fit_var:
                     bsf_fit_var = child_fit[i]
                     bsf_solution = ui[i, :].copy()
+                    no_improve_gen = 0
                     print(f"[Gen {g}] best_f={bsf_fit_var:.3f} | "
                           f"ms={child_ms[i]:.3f} | E={child_energy[i]:.3f} | "
                           f"pen={child_pen[i]:.3f} | res={child_res[i]:.3f} | "
                           f"cap={child_cap[i]:.3f} | bw={child_bw[i]:.3f} | lat={child_lat[i]:.3f}")
+                else:
+                    no_improve_gen += 1
 
             # 统计各策略贡献
             dif = np.abs(fitness - child_fit)
@@ -686,6 +848,10 @@ class ABGSK:
 
             best_indv.append(bsf_solution.copy())
             loss.append(bsf_fit_var)
+
+            if g % 50 == 0 and no_improve_gen >= 50:
+                print(f"[EARLY STOP] no improvement for {no_improve_gen} generations.")
+                break
 
             # 自适应缩减种群规模
             plan_pop_size = round(
