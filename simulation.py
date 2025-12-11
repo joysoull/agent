@@ -8,13 +8,13 @@ import numpy as np
 # 任务数量(M)
 task_number = 10
 # IoT设备数量
-device_number = 30
+device_number = 50
 # 云服务器数量
 cloud_number = 1
 # 边缘服务器数量
-edge_number = 10
+edge_number = 20
 # 网关数量
-gateway_number = 3
+gateway_number = 4
 
 # ====== 智慧工厂层级参数（工厂 / 车间 / 生产线） ======
 factory_number = 1               # 当前只建 1 个工厂
@@ -109,8 +109,7 @@ cloud_server = {
     'bandwidth': -1,
     'delay': -1,
 
-    # <<< 层级信息：云不在工厂层级内，单独作为 "cloud" >>>
-    'level': 'cloud',         # 'line' / 'workshop' / 'factory' / 'cloud'
+    'level': 'factory',
     'factory_id': None,
     'workshop_id': None,
     'line_id': None,
@@ -138,16 +137,12 @@ def _sample_task_deploy_domains() -> List[Dict]:
     为每个任务随机生成一个部署域:
       - line_only         : 只能在生产线级设备上部署
       - line_workshop     : 生产线 + 车间
-      - workshop_factory  : 车间 + 工厂
-      - factory_cloud     : 工厂 + 云
       - all               : 全层级通用
     """
     domain_patterns = [
         ("line_only", ["line"]),
         ("line_workshop", ["line", "workshop"]),
-        ("workshop_factory", ["workshop", "factory"]),
-        ("factory_cloud", ["factory", "cloud"]),
-        ("all", ["line", "workshop", "factory", "cloud"]),
+        ("all", ["line", "workshop", "factory"]),
     ]
 
     task_domains = []

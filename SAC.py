@@ -353,14 +353,17 @@ def evaluation_func_rl(
         device_map: Dict[int, 'Device'],
         gw_matrix: np.ndarray,
         exec_time_cache: Optional[Dict[Tuple[int, int], float]] = None,
-) -> tuple[float, float, float] | tuple[float, float, dict[str, float]]:
+) -> tuple[float, float, dict[str, float]]:
     """
-    方案B：构造"三相位"模块图（pre/core/post），
-    - pre→core 承载模块内 S→P 的最大延迟
-    - core 承载执行时间
-    - core→post 承载模块内 P→A 的最大延迟
-    - 跨模块边统一用 U(core)→V(core) 承载通信延迟
-    仅返回 makespan，能耗与惩罚置 0.0
+    构造三相位模块图 (pre/core/post) 计算 makespan，
+    同时返回能耗和各类惩罚指标：
+      - res_penalty: 资源违反（按比例累计）
+      - cap_penalty: 能力违反（计数）
+      - bw_penalty : 带宽违反（归一化累计）
+      - lat_penalty: 时延违反（归一化累计）
+      - load_penalty: 负载均衡惩罚（基于设备利用率 max + 方差）
+      - cloud_frac  : 软实例在云上的比例
+      - penalty_base: 上述按权重加权后的总惩罚
     """
     @lru_cache(maxsize=100000)
     def cached_transmission_delay(src_id: int, dst_id: int, data_size_mb: float, bw_req: float):
@@ -374,8 +377,7 @@ def evaluation_func_rl(
             gw_matrix=gw_matrix,
         )
 
-    # --- 初始化 ---
-    # --- 映射：节点 -> 模块 ---
+    # --- 初始化 & 节点→模块映射 ---
     node_to_module_map: Dict[str, int] = {}
     task_id = -1
     for (tid, mod_id), mod_info in placement.items():
@@ -383,9 +385,20 @@ def evaluation_func_rl(
         for node in mod_info["nodes"]:
             node_to_module_map[node] = mod_id
     if task_id == -1:
-        return -1.0, 0.0, 0.0  # 空方案
+        return -1.0, 0.0, {
+            "exec_energy": 0.0,
+            "comm_energy": 0.0,
+            "total_energy": 0.0,
+            "res_penalty": 0.0,
+            "cap_penalty": 0.0,
+            "bw_penalty": 0.0,
+            "lat_penalty": 0.0,
+            "load_penalty": 0.0,
+            "cloud_frac": 0.0,
+            "penalty_base": 0.0,
+        }
 
-    # 2) 辅助：查节点落在哪个设备
+    # 设备查询
     def get_device_for_node(node_id: str) -> Optional[int]:
         module_id = node_to_module_map.get(node_id)
         if module_id is None:
@@ -405,7 +418,9 @@ def evaluation_func_rl(
             return mod_place["act_map"].get(idx)
         return None
 
-    # --- 1) 每个模块的执行时间（core 相位） ---
+    # ----------------------------------------------------------------------
+    # 1) 模块执行时间 (core phase)
+    # ----------------------------------------------------------------------
     exec_time_map: Dict[Tuple[int, Any], float] = {}  # (task_id, phase_node) -> time(s)
     for (tid, module_id), info in placement.items():
         core_time = None
@@ -421,7 +436,6 @@ def evaluation_func_rl(
             gpu_time = (r_gpu / gpu_cap) if gpu_cap > 0 else 0.0
             core_time = max(cpu_time, gpu_time)
 
-        # 三相位节点键
         n_pre = (module_id, "pre")
         n_core = (module_id, "core")
         n_post = (module_id, "post")
@@ -429,21 +443,25 @@ def evaluation_func_rl(
         exec_time_map[(task_id, n_pre)] = 0.0
         exec_time_map[(task_id, n_core)] = float(core_time)
         exec_time_map[(task_id, n_post)] = 0.0
-    # --- 2) 统计模块内 S→P / P→A 的最大链路时延（仅跨设备才有时延） ---
-    intra_pre_ms = defaultdict(float)  # 模块内 S→P
-    intra_post_ms = defaultdict(float)  # 模块内 P→A
+
+    # ----------------------------------------------------------------------
+    # 2) 模块内 S→P / P→A 最大链路时延 (只记录跨设备)
+    # ----------------------------------------------------------------------
+    intra_pre_ms = defaultdict(float)
+    intra_post_ms = defaultdict(float)
+
     for u, v, attr in task_graph.get_dependencies():
         u_mod = node_to_module_map.get(u)
         v_mod = node_to_module_map.get(v)
         if u_mod is None or v_mod is None:
             continue
         if u_mod != v_mod:
-            continue  # 这里只统计“模块内”边
+            continue
 
         du = get_device_for_node(u)
         dv = get_device_for_node(v)
         if du is None or dv is None or du == dv:
-            continue  # 同设备或未分配，不产生链路延迟
+            continue
 
         u_type = task_graph.G.nodes[u].get("type", "proc")
         v_type = task_graph.G.nodes[v].get("type", "proc")
@@ -459,12 +477,14 @@ def evaluation_func_rl(
             intra_pre_ms[u_mod] = max(intra_pre_ms[u_mod], float(delay_ms))
         elif u_type == "proc" and v_type == "act":
             intra_post_ms[u_mod] = max(intra_post_ms[u_mod], float(delay_ms))
-        # 其它类型（proc→proc等）按需扩展
 
-    # --- 3) 组装三相位图的边与延迟 ---
-    agent_dag_edges: List[Tuple[Any, Any, Dict]] = []  # (phase_u, phase_v, {})
-    edge_delay_map: Dict[Tuple[int, Any, Any], float] = {}  # (task_id, phase_u, phase_v) -> delay(s)
-    # 3a) 模块内 pre→core、core→post（ms -> s）
+    # ----------------------------------------------------------------------
+    # 3) 三相位 DAG 的边与延迟
+    # ----------------------------------------------------------------------
+    agent_dag_edges: List[Tuple[Any, Any, Dict]] = []
+    edge_delay_map: Dict[Tuple[int, Any, Any], float] = {}
+
+    # 3a) pre→core、core→post
     for (tid, module_id), _ in placement.items():
         n_pre = (module_id, "pre")
         n_core = (module_id, "core")
@@ -475,9 +495,9 @@ def evaluation_func_rl(
 
         agent_dag_edges.append((n_core, n_post, {}))
         edge_delay_map[(task_id, n_core, n_post)] = intra_post_ms[module_id] / 1000.0
-    # 3b) 跨模块边：统一用 U(core) → V(core)，延迟取该边跨设备通信（ms -> s）
-    # 若同一模块对之间多条边，取最大延迟（关键路径）
-    inter_core_delay_sec = defaultdict(float)  # key: (U_core, V_core)
+
+    # 3b) 跨模块 core→core 的最大通信延迟
+    inter_core_delay_sec = defaultdict(float)
     for u, v, attr in task_graph.get_dependencies():
         u_mod = node_to_module_map.get(u)
         v_mod = node_to_module_map.get(v)
@@ -504,40 +524,58 @@ def evaluation_func_rl(
         v_core = (v_mod, "core")
         key = (u_core, v_core)
         inter_core_delay_sec[key] = max(inter_core_delay_sec[key], delay_sec)
+
     for (u_core, v_core), dsec in inter_core_delay_sec.items():
         agent_dag_edges.append((u_core, v_core, {}))
         edge_delay_map[(task_id, u_core, v_core)] = dsec
-    # --- 4) 计算 makespan ---
+
+    # ----------------------------------------------------------------------
+    # 4) 计算 makespan
+    # ----------------------------------------------------------------------
     makespan = compute_task_finish_time(
         task_id=task_id,
         agent_dag_edges=agent_dag_edges,
         exec_time_map=exec_time_map,
         edge_delay_map=edge_delay_map
     )
-    # 4a) 计算能耗：按模块计算 CPU/GPU 能耗（J = W * s）
+
+    # ----------------------------------------------------------------------
+    # 5) 计算执行能耗
+    # ----------------------------------------------------------------------
     exec_energy_J = 0.0
     for (tid, module_id), info in placement.items():
         agent = agent_lookup[info["agent_id"]]
         dev = device_map[info["soft_device"]]
         r_cpu, _, r_gpu, _, _, _ = agent.r
+
         cpu_cap = float(getattr(dev.resource, "cpu", 0.0))
         gpu_cap = float(getattr(dev.resource, "gpu", 0.0))
         cpu_pow = float(getattr(dev.resource, "cpu_power", 0.0))  # W
         gpu_pow = float(getattr(dev.resource, "gpu_power", 0.0))  # W
-        cpu_time = (r_cpu / cpu_cap) / 3600.0 if cpu_cap > 0 else 0.0  # s（按你现有定义）
+
+        # 你原先就有的时间近似，这里沿用
+        cpu_time = (r_cpu / cpu_cap) / 3600.0 if cpu_cap > 0 else 0.0  # s
         gpu_time = (r_gpu / gpu_cap) / 3600.0 if gpu_cap > 0 else 0.0
         exec_energy_J += cpu_time * cpu_pow + gpu_time * gpu_pow
-    # 4b) 通信能耗：对任务图所有跨设备边累加（不取 max）
+
+    # ----------------------------------------------------------------------
+    # 6) 通信能耗 + 带宽/时延违约：对任务图所有跨设备边累加（不取 max）
+    # ----------------------------------------------------------------------
     SENSE_DATA_MB_DEFAULT = 0.5
     CTRL_DATA_MB_DEFAULT = 0.1
     PROC_DATA_MB_DEFAULT = 1.0
     LAT_REQ_DEFAULT = 50.0
     BW_REQ_DEFAULT = 0.0
+
     comm_energy_J = 0.0
+    bw_violation_sum = 0.0
+    lat_violation_sum = 0.0
+
     G = task_graph.G
     for u, v, attr in task_graph.get_dependencies():
         du = get_device_for_node(u)
         dv = get_device_for_node(v)
+        # 同设备认为无通信违约，直接跳过
         if du is None or dv is None or du == dv:
             continue
 
@@ -557,20 +595,206 @@ def evaluation_func_rl(
         if bw_req is None:
             bw_req = BW_REQ_DEFAULT
         if lat_req is None:
+            # 没有配置时，我们给一个类型相关的宽松默认值
             lat_req = 20.0 if (u_type == "sense" and v_type == "proc") or (
                     u_type == "proc" and v_type == "act") else LAT_REQ_DEFAULT
 
-        _, _, ej = cached_transmission_delay(
+        delay_ms, actual_bw, ej = cached_transmission_delay(
             du,
             dv,
             data_mb,
             bw_req,
         )
         comm_energy_J += float(ej)
+
+        # 归一化违约：>0 时表示违反程度
+        lat_violation_sum += norm_latency(delay_ms, lat_req)
+        bw_violation_sum += norm_bandwidth(actual_bw, bw_req)
+
+    # ----------------------------------------------------------------------
+    # 7) 资源/能力违约：按模块统计 + 设备级资源使用累计（用于负载评估）
+    # ----------------------------------------------------------------------
+    res_violation_sum = 0.0
+    cap_violation_sum = 0.0
+
+    # 初始化设备使用量字典：device_id -> {cpu, num, gpu, gpu_mem, ram, disk}
+    device_usage = {dev_id: {"cpu": 0.0, "num": 0.0, "gpu": 0.0, "gpu_mem": 0.0, "ram": 0.0, "disk": 0.0}
+                    for dev_id in device_map.keys()}
+
+    soft_on_cloud_count = 0
+    soft_total_count = 0
+
+    for (tid, module_id), info in placement.items():
+        agent = agent_lookup[info["agent_id"]]
+        dev_soft = device_map.get(info["soft_device"])
+        soft_total_count += 1
+        if dev_soft is None:
+            # 找不到设备，直接记一笔比较重的资源+能力违约
+            res_violation_sum += 1.0
+            cap_violation_sum += 1.0
+            continue
+
+        # 资源向量：顺序要和模板 r 一致
+        need_cpu, need_num, need_gpu, need_gpu_mem, need_ram, need_disk = agent.r
+        res = dev_soft.resource
+        avail_cpu = float(getattr(res, "cpu", 0.0))
+        avail_num = float(getattr(res, "num", 0.0))
+        avail_gpu = float(getattr(res, "gpu", 0.0))
+        avail_gpu_mem = float(getattr(res, "gpu_mem", 0.0))
+        avail_ram = float(getattr(res, "ram", 0.0))
+        avail_disk = float(getattr(res, "disk", 0.0))
+
+        # 累加到设备使用量（用于后续的利用率计算）
+        du = device_usage[dev_soft.id]
+        du["cpu"] += float(need_cpu)
+        du["num"] += float(need_num)
+        du["gpu"] += float(need_gpu)
+        du["gpu_mem"] += float(need_gpu_mem)
+        du["ram"] += float(need_ram)
+        du["disk"] += float(need_disk)
+
+        if getattr(dev_soft, "type", "").lower() == "cloud":
+            soft_on_cloud_count += 1
+
+        # 对每个维度，超出的比例作为一部分违约（max((need-avail)/avail, 0)）
+        def over_ratio(need, avail):
+            if avail <= 0:
+                return 1.0 if need > 0 else 0.0
+            return max((need - avail) / avail, 0.0)
+
+        res_violation_sum += (
+                over_ratio(need_cpu, avail_cpu) +
+                over_ratio(need_num, avail_num) +
+                over_ratio(need_gpu, avail_gpu) +
+                over_ratio(need_gpu_mem, avail_gpu_mem) +
+                over_ratio(need_ram, avail_ram) +
+                over_ratio(need_disk, avail_disk)
+        )
+
+        # 能力匹配检查：soft/sense/act
+        dev_soft_caps = getattr(dev_soft, "soft_cap", set())
+        for cap in agent.C_soft:
+            if cap not in dev_soft_caps:
+                cap_violation_sum += 1.0
+
+        for cap in agent.C_sense:
+            dev_id = info["sense_map"].get(cap)
+            dev = device_map.get(dev_id)
+            if dev is None:
+                cap_violation_sum += 1.0
+                continue
+            dev_sense_caps = getattr(dev, "sense_cap", set())
+            if cap not in dev_sense_caps:
+                cap_violation_sum += 1.0
+
+        for cap in agent.C_act:
+            dev_id = info["act_map"].get(cap)
+            dev = device_map.get(dev_id)
+            if dev is None:
+                cap_violation_sum += 1.0
+                continue
+            dev_act_caps = getattr(dev, "act_cap", set())
+            if cap not in dev_act_caps:
+                cap_violation_sum += 1.0
+
+    # ----------------------------------------------------------------------
+    # 8) 设备利用率与负载惩罚（load_penalty）
+    #    - 每个设备的利用率：对可用维度计算 used/avail 的均值（不可用维度忽略）
+    #    - load_penalty = max_util + var(util)
+    # ----------------------------------------------------------------------
+    util_list = []
+    for dev_id, usage in device_usage.items():
+        dev = device_map.get(dev_id)
+        if dev is None:
+            continue
+        res = dev.resource
+        # 维度集合：cpu(num cores), gpu_mem, ram, disk
+        dims = []
+        # cpu cores
+        cap_cpu = float(getattr(res, "cpu", 0.0))
+        if cap_cpu > 0:
+            dims.append(usage["cpu"] / cap_cpu)
+        # gpu memory
+        cap_gpu_mem = float(getattr(res, "gpu_mem", 0.0))
+        if cap_gpu_mem > 0:
+            dims.append(usage["gpu_mem"] / cap_gpu_mem)
+        # ram
+        cap_ram = float(getattr(res, "ram", 0.0))
+        if cap_ram > 0:
+            dims.append(usage["ram"] / cap_ram)
+        # disk
+        cap_disk = float(getattr(res, "disk", 0.0))
+        if cap_disk > 0:
+            dims.append(usage["disk"] / cap_disk)
+
+        if not dims:
+            continue
+        # 利用率下限为0，上限可大于1（代表超载）
+        util = float(np.mean(dims))
+        util_list.append(util)
+
+    if util_list:
+        util_arr = np.array(util_list, dtype=float)
+        max_util = float(np.max(util_arr))
+        mean_util = float(np.mean(util_arr))
+        var_util = float(np.mean((util_arr - mean_util) ** 2))
+        load_penalty = max_util + var_util
+    else:
+        max_util = 0.0
+        mean_util = 0.0
+        var_util = 0.0
+        load_penalty = 0.0
+
+    # 云上 soft 实例比例
+    cloud_frac = (soft_on_cloud_count / soft_total_count) if soft_total_count > 0 else 0.0
+
+    # ----------------------------------------------------------------------
+    # 9) 合成惩罚（可调权重）
+    # ----------------------------------------------------------------------
+    # 权重（可调）
+    LOAD_PENALTY_WEIGHT = 200.0    # 负载均衡惩罚权重（越大越希望分散）
+    CLOUD_PENALTY_WEIGHT = 1e4    # 抑制把太多放云上，按需调小/调大
+    # 资源/能力/带宽/延迟 四类原始惩罚使用已有常量（如果你在外部模块定义了 W_*，也可引用）
+    # 这里给一套默认权重（可以和你整体 alpha/beta 一起调）
+    W_RES = 1.0
+    W_CAP = 1.0
+    W_BW = 1.0
+    W_LAT = 1.0
+
+    res_penalty = float(res_violation_sum)
+    cap_penalty = float(cap_violation_sum)
+    bw_penalty = float(bw_violation_sum)
+    lat_penalty = float(lat_violation_sum)
+
+    penalty_base = (
+        W_RES * res_penalty +
+        W_CAP * cap_penalty +
+        W_BW * bw_penalty +
+        W_LAT * lat_penalty +
+        LOAD_PENALTY_WEIGHT * float(load_penalty) +
+        CLOUD_PENALTY_WEIGHT * float(cloud_frac)
+    )
+
+    # ----------------------------------------------------------------------
+    # 10) 组装 detail 并返回
+    # ----------------------------------------------------------------------
     energy_bd = {
         "exec": float(exec_energy_J),
         "comm": float(comm_energy_J),
         "total": float(exec_energy_J + comm_energy_J),
+        "res_violation": res_penalty,
+        "cap_violation": cap_penalty,
+        "bw_violation": bw_penalty,
+        "lat_violation": lat_penalty,
+        "max_util": max_util,
+        "mean_util": mean_util,
+        "var_util": var_util,
+        "load_penalty": float(load_penalty),
+        "cloud_frac": float(cloud_frac),
+        "penalty_base": float(penalty_base),
     }
 
     return float(makespan), float(energy_bd["total"]), energy_bd
+
+
+
